@@ -71,11 +71,11 @@ class GPOFishingBotV2:
         # Convertir en niveaux de gris
         gray = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2GRAY)
         
-        # Masque pour la zone grise/foncée de contrôle
-        # Ajuster ces valeurs si la détection ne marche pas
-        lower_gray = 60
-        upper_gray = 140
-        mask = cv2.inRange(gray, lower_gray, upper_gray)
+       # Masque pour la zone CLAIRE/VIDE de contrôle (la partie mobile)
+        # On inverse la détection : on cherche le clair, pas le foncé
+        lower_light = 140
+        upper_light = 255
+        mask = cv2.inRange(gray, lower_light, upper_light)
         
         # Trouver le centre de masse
         moments = cv2.moments(mask)
