@@ -4,32 +4,160 @@ import mss
 import pyautogui
 import time
 
-class GPOFishingBotV2:
+class GPOFishingBotV3:
     def __init__(self):
         self.sct = mss.mss()
         self.running = False
         self.is_clicking = False
         
-        # ZONES FIXES CALIBRÉES
-        # Barre bleue (zone de contrôle)
-        self.blue_bar = {
-            "top": 416,
-            "left": 1136,
-            "width": 27,    # 1163 - 1136
-            "height": 423   # 839 - 416
-        }
+        # DIMENSIONS FIXES (qui marchent bien)
+        self.blue_bar_width = 27
+        self.blue_bar_height = 423
+        self.green_bar_width = 22
+        self.green_bar_height = 319
         
-        # Barre verte (progression)
-        self.green_bar = {
-            "top": 468,
-            "left": 1200,
-            "width": 22,    # 1222 - 1200
-            "height": 319   # 787 - 468
-        }
+        # OFFSET RELATIF entre barre bleue et verte (depuis ton config originale)
+        # Barre verte est à droite de la bleue
+        self.green_offset_x = 64  # 1200 - 1136 = 64 pixels à droite
+        self.green_offset_y = 52  # 468 - 416 = 52 pixels plus bas
+        
+        # ZONES (seront calibrées automatiquement)
+        self.blue_bar = None
+        self.green_bar = None
         
         # Paramètres de détection
-        self.offset_anticipation = 15  # Pixels d'anticipation pour le clic
+        self.offset_anticipation = 15
+        self.calibrated = False
         
+    def auto_calibrate(self):
+        """
+        Détecte automatiquement la position de la barre bleue,
+        puis calcule la position de la barre verte par rapport à celle-ci
+        """
+        print("\n🔍 CALIBRATION AUTOMATIQUE EN COURS...")
+        print("Place-toi devant le mini-jeu de pêche !")
+        print("Recherche de la barre bleue...\n")
+        
+        # Créer une fenêtre de preview
+        cv2.namedWindow("Calibration", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Calibration", 800, 600)
+        cv2.moveWindow("Calibration", 50, 50)
+        
+        attempts = 0
+        max_attempts = 100  # 100 frames max pour détecter
+        
+        while attempts < max_attempts:
+            attempts += 1
+            
+            # Capturer l'écran complet
+            monitor = self.sct.monitors[1]
+            screenshot = self.sct.grab(monitor)
+            frame = np.array(screenshot)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            
+            # Détecter la barre bleue
+            blue_region = self.find_blue_bar(frame)
+            
+            if blue_region:
+                # ✅ BARRE BLEUE TROUVÉE !
+                blue_x = blue_region['x']
+                blue_y = blue_region['y']
+                
+                # Utiliser les dimensions fixes qui marchent bien
+                self.blue_bar = {
+                    "top": blue_y,
+                    "left": blue_x,
+                    "width": self.blue_bar_width,
+                    "height": self.blue_bar_height
+                }
+                
+                # Calculer la position de la barre verte par offset relatif
+                self.green_bar = {
+                    "top": blue_y + self.green_offset_y,
+                    "left": blue_x + self.green_offset_x,
+                    "width": self.green_bar_width,
+                    "height": self.green_bar_height
+                }
+                
+                # Afficher le résultat
+                scale = 0.5
+                debug_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
+                
+                # Dessiner les zones détectées
+                cv2.rectangle(debug_frame, 
+                            (int(blue_x * scale), int(blue_y * scale)),
+                            (int((blue_x + self.blue_bar_width) * scale), 
+                             int((blue_y + self.blue_bar_height) * scale)),
+                            (255, 0, 0), 2)
+                
+                cv2.rectangle(debug_frame,
+                            (int(self.green_bar['left'] * scale), int(self.green_bar['top'] * scale)),
+                            (int((self.green_bar['left'] + self.green_bar_width) * scale),
+                             int((self.green_bar['top'] + self.green_bar_height) * scale)),
+                            (0, 255, 0), 2)
+                
+                cv2.putText(debug_frame, "CALIBRATION OK!", (20, 40),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                
+                cv2.imshow("Calibration", debug_frame)
+                cv2.waitKey(2000)  # Afficher 2 secondes
+                cv2.destroyAllWindows()
+                
+                print("✅ CALIBRATION RÉUSSIE !")
+                print(f"\n📍 Barre bleue détectée à : X={blue_x}, Y={blue_y}")
+                print(f"📍 Barre verte calculée à : X={self.green_bar['left']}, Y={self.green_bar['top']}")
+                print(f"\n✅ Zones configurées avec succès !")
+                
+                self.calibrated = True
+                return True
+            
+            # Preview pendant la recherche
+            if attempts % 3 == 0:
+                scale = 0.5
+                debug_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
+                cv2.putText(debug_frame, f"Recherche... ({attempts}/{max_attempts})", (20, 40),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
+                cv2.imshow("Calibration", debug_frame)
+                cv2.waitKey(1)
+            
+            time.sleep(0.1)
+        
+        # ❌ Échec
+        cv2.destroyAllWindows()
+        print("\n❌ CALIBRATION ÉCHOUÉE")
+        print("Assure-toi d'être devant le mini-jeu de pêche avec la barre bleue visible !")
+        return False
+    
+    def find_blue_bar(self, frame):
+        """
+        Trouve la barre bleue dans l'écran (copié de detect_bars.py)
+        """
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Détecter le bleu clair de la barre
+        lower_blue = np.array([90, 80, 120])
+        upper_blue = np.array([130, 255, 255])
+        
+        mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
+        
+        # Nettoyer le masque
+        kernel = np.ones((5, 5), np.uint8)
+        mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_CLOSE, kernel)
+        mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_OPEN, kernel)
+        
+        # Trouver les contours
+        contours, _ = cv2.findContours(mask_blue, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Chercher un contour vertical (barre)
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            
+            # Critères : hauteur > largeur, taille minimale, ratio vertical
+            if h > 150 and w > 10 and h > w * 5:
+                return {'x': x, 'y': y, 'width': w, 'height': h}
+        
+        return None
+    
     def capture_blue_bar(self):
         """Capture uniquement la barre bleue"""
         screenshot = self.sct.grab(self.blue_bar)
@@ -43,19 +171,13 @@ class GPOFishingBotV2:
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     
     def find_white_marker_y(self, blue_frame):
-        """
-        Trouve la position Y du marqueur blanc (poisson) dans la barre bleue.
-        Retourne la position relative (0 = haut de la barre, height = bas)
-        """
-        # Convertir en HSV pour mieux détecter le blanc
+        """Trouve la position Y du marqueur blanc (poisson)"""
         hsv = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2HSV)
         
-        # Masque pour le blanc (marqueur poisson)
         lower_white = np.array([0, 0, 180])
         upper_white = np.array([180, 50, 255])
         mask = cv2.inRange(hsv, lower_white, upper_white)
         
-        # Trouver le centre de masse des pixels blancs
         moments = cv2.moments(mask)
         if moments["m00"] > 0:
             cy = int(moments["m01"] / moments["m00"])
@@ -64,53 +186,38 @@ class GPOFishingBotV2:
         return None
     
     def find_gray_zone_y(self, blue_frame):
-        """
-        Trouve la position Y de la zone grise mobile en détectant la couleur #191919
-        et en filtrant par largeur (la barre mobile est plus épaisse que les contours)
-        """
-        # Convertir hex #191919 en BGR pour OpenCV
-        target_color_bgr = np.array([25, 25, 25])  # #191919 en BGR
+        """Trouve la position Y de la zone grise mobile"""
+        target_color_bgr = np.array([25, 25, 25])
         
-        # Créer un masque avec une tolérance de ±10 pour gérer les variations
         lower_bound = np.array([15, 15, 15])
         upper_bound = np.array([35, 35, 35])
         mask = cv2.inRange(blue_frame, lower_bound, upper_bound)
         
-        # Analyser ligne par ligne pour trouver la zone la plus LARGE
         height = mask.shape[0]
         max_width = 0
         best_y = None
         
         for y in range(height):
             row = mask[y, :]
-            # Compter les pixels blancs (détectés) consécutifs
             white_pixels = np.sum(row > 0)
             
-            # Si cette ligne a plus de pixels que le record, c'est probablement la barre mobile
             if white_pixels > max_width:
                 max_width = white_pixels
                 best_y = y
         
-        # Filtrer : la barre mobile doit avoir au moins 15 pixels de large
         if best_y is not None and max_width >= 15:
             return best_y
         
         return None
     
     def get_green_bar_progress(self, green_frame):
-        """
-        Calcule le pourcentage de remplissage de la barre verte.
-        Retourne un float entre 0.0 et 100.0
-        """
-        # Convertir en HSV
+        """Calcule le pourcentage de remplissage de la barre verte"""
         hsv = cv2.cvtColor(green_frame, cv2.COLOR_BGR2HSV)
         
-        # Masque pour le vert
         lower_green = np.array([35, 50, 50])
         upper_green = np.array([85, 255, 255])
         mask = cv2.inRange(hsv, lower_green, upper_green)
         
-        # Compter les pixels verts par rapport au total
         green_pixels = np.sum(mask > 0)
         total_pixels = mask.shape[0] * mask.shape[1]
         
@@ -121,33 +228,30 @@ class GPOFishingBotV2:
         return 0.0
     
     def should_click(self, gray_y, white_y):
-        """
-        Décide si on doit cliquer ou non.
-        
-        LOGIQUE:
-        - Si la zone grise est EN DESSOUS du marqueur blanc → Cliquer (pour la faire monter)
-        - Si la zone grise est AU-DESSUS ou alignée → Ne pas cliquer (elle redescend naturellement)
-        
-        On ajoute un offset d'anticipation pour réagir plus vite.
-        """
+        """Décide si on doit cliquer"""
         if gray_y is None or white_y is None:
             return False
         
-        # Si gris EN DESSOUS du blanc (plus grand Y) → cliquer pour monter
         return gray_y > (white_y - self.offset_anticipation)
     
     def run(self, debug=True):
-        """Lance le bot avec affichage debug optionnel"""
+        """Lance le bot avec calibration automatique"""
         print("=" * 50)
-        print("GPO AUTO FISHING BOT V2 - FIXED")
+        print("GPO AUTO FISHING BOT V3 - AUTO-CALIBRATION")
         print("=" * 50)
-        print("\nZones calibrées:")
-        print(f"  Barre bleue: {self.blue_bar}")
-        print(f"  Barre verte: {self.green_bar}")
+        
+        # 🔧 PHASE 1 : CALIBRATION
+        if not self.auto_calibrate():
+            print("\n⚠️ Impossible de lancer le bot sans calibration.")
+            return
+        
+        # 🎮 PHASE 2 : LANCEMENT DU BOT
+        print("\n" + "=" * 50)
+        print("🎣 DÉMARRAGE DU BOT")
+        print("=" * 50)
         print("\nCommandes:")
         print("  'q' = Arrêter le bot")
-        print("\nDémarrage dans 3 secondes...")
-        print("Place-toi devant le mini-jeu de pêche!\n")
+        print("\nDémarrage dans 3 secondes...\n")
         
         time.sleep(3)
         
@@ -155,7 +259,6 @@ class GPOFishingBotV2:
         fps_counter = 0
         fps_start = time.time()
         
-        # Créer la fenêtre debug si activé
         if debug:
             cv2.namedWindow("Bot Debug", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Bot Debug", 800, 500)
@@ -163,19 +266,19 @@ class GPOFishingBotV2:
         
         try:
             while self.running:
-                # === CAPTURE ===
+                # Capture
                 blue_frame = self.capture_blue_bar()
                 green_frame = self.capture_green_bar()
                 
-                # === DÉTECTION ===
+                # Détection
                 white_y = self.find_white_marker_y(blue_frame)
                 gray_y = self.find_gray_zone_y(blue_frame)
                 progress = self.get_green_bar_progress(green_frame)
                 
-                # === DÉCISION ===
+                # Décision
                 should_hold = self.should_click(gray_y, white_y)
                 
-                # === ACTION ===
+                # Action
                 if should_hold and not self.is_clicking:
                     pyautogui.mouseDown()
                     self.is_clicking = True
@@ -183,22 +286,17 @@ class GPOFishingBotV2:
                     pyautogui.mouseUp()
                     self.is_clicking = False
                 
-                # === DEBUG VISUEL ===
+                # Debug visuel
                 if debug:
-                    # Créer une vue combinée
                     debug_view = np.zeros((500, 800, 3), dtype=np.uint8)
                     
-                    # Agrandir la barre bleue pour mieux voir
                     blue_scaled = cv2.resize(blue_frame, (200, 400))
                     debug_view[50:450, 50:250] = blue_scaled
                     
-                    # Agrandir la barre verte
                     green_scaled = cv2.resize(green_frame, (100, 400))
                     debug_view[50:450, 300:400] = green_scaled
                     
-                    # Dessiner les détections sur la barre bleue agrandie
                     if white_y is not None:
-                        # Scale la position Y
                         white_y_scaled = int((white_y / self.blue_bar["height"]) * 400) + 50
                         cv2.line(debug_view, (50, white_y_scaled), (250, white_y_scaled), 
                                 (255, 255, 255), 3)
@@ -212,7 +310,6 @@ class GPOFishingBotV2:
                         cv2.putText(debug_view, "CONTROLE", (260, gray_y_scaled), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
                     
-                    # Afficher les infos
                     info_y = 50
                     cv2.putText(debug_view, f"Progress: {progress:.1f}%", (450, info_y),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
@@ -236,7 +333,7 @@ class GPOFishingBotV2:
                     
                     cv2.imshow("Bot Debug", debug_view)
                 
-                # === FPS COUNTER ===
+                # FPS Counter
                 fps_counter += 1
                 if time.time() - fps_start >= 1.0:
                     print(f"FPS: {fps_counter:2d} | Progress: {progress:5.1f}% | " +
@@ -245,7 +342,7 @@ class GPOFishingBotV2:
                     fps_counter = 0
                     fps_start = time.time()
                 
-                # === CHECK COMPLETION ===
+                # Check completion
                 if progress >= 95.0:
                     print("\n🎣 POISSON ATTRAPÉ! 🎣")
                     print("Attente de 3 secondes avant de continuer...\n")
@@ -254,7 +351,7 @@ class GPOFishingBotV2:
                         self.is_clicking = False
                     time.sleep(3)
                 
-                # === CHECK QUIT ===
+                # Check quit
                 if debug and cv2.waitKey(1) & 0xFF == ord('q'):
                     break
         
@@ -262,7 +359,6 @@ class GPOFishingBotV2:
             print("\n\n⚠️ Arrêt demandé par l'utilisateur")
         
         finally:
-            # Cleanup
             if self.is_clicking:
                 pyautogui.mouseUp()
             if debug:
@@ -271,11 +367,10 @@ class GPOFishingBotV2:
 
 # === POINT D'ENTRÉE ===
 if __name__ == "__main__":
-    bot = GPOFishingBotV2()
+    bot = GPOFishingBotV3()
     
     print("\n" + "="*50)
-    print("LANCEMENT DU BOT - VERSION FIXÉE")
+    print("LANCEMENT DU BOT - VERSION AUTO-CALIBRATION")
     print("="*50)
     
-    # Lancer avec debug activé (fenêtre visuelle)
     bot.run(debug=True)
