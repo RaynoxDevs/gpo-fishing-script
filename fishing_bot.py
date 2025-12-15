@@ -65,35 +65,35 @@ class GPOFishingBotV2:
     
     def find_gray_zone_y(self, blue_frame):
         """
-        FIX: Trouve la position Y de la zone grise (que tu contrôles).
-        NOUVELLE MÉTHODE: Détection basée sur la zone la plus sombre (la zone de contrôle)
+        Trouve la position Y de la zone grise mobile en détectant la couleur #191919
+        et en filtrant par largeur (la barre mobile est plus épaisse que les contours)
         """
-        # Convertir en niveaux de gris
-        gray = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2GRAY)
+        # Convertir hex #191919 en BGR pour OpenCV
+        target_color_bgr = np.array([25, 25, 25])  # #191919 en BGR
         
-        # NOUVELLE APPROCHE: Chercher la zone la plus SOMBRE (zone de contrôle)
-        # La zone de contrôle est plus foncée que le reste de la barre bleue
-        lower_dark = 30
-        upper_dark = 100
-        mask = cv2.inRange(gray, lower_dark, upper_dark)
+        # Créer un masque avec une tolérance de ±10 pour gérer les variations
+        lower_bound = np.array([15, 15, 15])
+        upper_bound = np.array([35, 35, 35])
+        mask = cv2.inRange(blue_frame, lower_bound, upper_bound)
         
-        # Appliquer un flou pour réduire le bruit
-        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+        # Analyser ligne par ligne pour trouver la zone la plus LARGE
+        height = mask.shape[0]
+        max_width = 0
+        best_y = None
         
-        # Trouver les contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # Prendre le plus grand contour (la zone de contrôle)
-            largest_contour = max(contours, key=cv2.contourArea)
+        for y in range(height):
+            row = mask[y, :]
+            # Compter les pixels blancs (détectés) consécutifs
+            white_pixels = np.sum(row > 0)
             
-            # Si le contour est assez grand (éviter les faux positifs)
-            if cv2.contourArea(largest_contour) > 50:
-                # Calculer le centre de masse du contour
-                M = cv2.moments(largest_contour)
-                if M["m00"] > 0:
-                    cy = int(M["m01"] / M["m00"])
-                    return cy
+            # Si cette ligne a plus de pixels que le record, c'est probablement la barre mobile
+            if white_pixels > max_width:
+                max_width = white_pixels
+                best_y = y
+        
+        # Filtrer : la barre mobile doit avoir au moins 15 pixels de large
+        if best_y is not None and max_width >= 15:
+            return best_y
         
         return None
     
