@@ -65,23 +65,35 @@ class GPOFishingBotV2:
     
     def find_gray_zone_y(self, blue_frame):
         """
-        Trouve la position Y de la zone grise (que tu contrôles).
-        Retourne la position relative du centre de la zone grise.
+        Trouve la position Y de la zone grise mobile en détectant la couleur #191919
+        et en filtrant par largeur (la barre mobile est plus épaisse que les contours)
         """
-        # Convertir en niveaux de gris
-        gray = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2GRAY)
+        # Convertir hex #191919 en BGR pour OpenCV
+        target_color_bgr = np.array([25, 25, 25])  # #191919 en BGR
         
-       # Masque pour la zone CLAIRE/VIDE de contrôle (la partie mobile)
-        # On inverse la détection : on cherche le clair, pas le foncé
-        lower_light = 140
-        upper_light = 255
-        mask = cv2.inRange(gray, lower_light, upper_light)
+        # Créer un masque avec une tolérance de ±10 pour gérer les variations
+        lower_bound = np.array([15, 15, 15])
+        upper_bound = np.array([35, 35, 35])
+        mask = cv2.inRange(blue_frame, lower_bound, upper_bound)
         
-        # Trouver le centre de masse
-        moments = cv2.moments(mask)
-        if moments["m00"] > 0:
-            cy = int(moments["m01"] / moments["m00"])
-            return cy
+        # Analyser ligne par ligne pour trouver la zone la plus LARGE
+        height = mask.shape[0]
+        max_width = 0
+        best_y = None
+        
+        for y in range(height):
+            row = mask[y, :]
+            # Compter les pixels blancs (détectés) consécutifs
+            white_pixels = np.sum(row > 0)
+            
+            # Si cette ligne a plus de pixels que le record, c'est probablement la barre mobile
+            if white_pixels > max_width:
+                max_width = white_pixels
+                best_y = y
+        
+        # Filtrer : la barre mobile doit avoir au moins 15 pixels de large
+        if best_y is not None and max_width >= 15:
+            return best_y
         
         return None
     
@@ -127,7 +139,7 @@ class GPOFishingBotV2:
     def run(self, debug=True):
         """Lance le bot avec affichage debug optionnel"""
         print("=" * 50)
-        print("GPO AUTO FISHING BOT V2")
+        print("GPO AUTO FISHING BOT V2 - FIXED")
         print("=" * 50)
         print("\nZones calibrées:")
         print(f"  Barre bleue: {self.blue_bar}")
@@ -247,7 +259,7 @@ class GPOFishingBotV2:
                     break
         
         except KeyboardInterrupt:
-            print("\n\n⚠️  Arrêt demandé par l'utilisateur")
+            print("\n\n⚠️ Arrêt demandé par l'utilisateur")
         
         finally:
             # Cleanup
@@ -262,7 +274,7 @@ if __name__ == "__main__":
     bot = GPOFishingBotV2()
     
     print("\n" + "="*50)
-    print("LANCEMENT DU BOT")
+    print("LANCEMENT DU BOT - VERSION FIXÉE")
     print("="*50)
     
     # Lancer avec debug activé (fenêtre visuelle)
