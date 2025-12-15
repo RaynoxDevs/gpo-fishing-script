@@ -29,6 +29,10 @@ class GPOFishingBotV3:
         self.offset_anticipation = 15
         self.calibrated = False
         
+        # 🆕 Système de clics proportionnels
+        self.last_click_time = 0
+        self.click_cooldown = 0.05  # Temps minimum entre changements (50ms)
+        
     def auto_calibrate(self):
         """
         Détecte automatiquement la position de la barre bleue,
@@ -228,11 +232,32 @@ class GPOFishingBotV3:
         return 0.0
     
     def should_click(self, gray_y, white_y):
-        """Décide si on doit cliquer"""
-        if gray_y is None or white_y is None:
-            return False
+        """
+        🆕 Décide si on doit cliquer avec ajustement proportionnel
         
-        return gray_y > (white_y - self.offset_anticipation)
+        Logique :
+        - Distance grande (>50px) : maintenir le clic
+        - Distance moyenne (20-50px) : clics modérés
+        - Distance petite (<20px) : micro-ajustements
+        """
+        if gray_y is None or white_y is None:
+            return False, None
+        
+        # Calculer la distance (positif = gris en dessous, négatif = gris au-dessus)
+        distance = gray_y - white_y
+        
+        # Si la zone grise est EN DESSOUS de la cible (distance > 0)
+        if distance > self.offset_anticipation:
+            # Plus la distance est grande, plus on maintient longtemps
+            if distance > 50:
+                return True, "long"  # Maintenir le clic longtemps
+            elif distance > 20:
+                return True, "medium"  # Clic moyen
+            else:
+                return True, "short"  # Micro-clic
+        
+        # Si la zone grise est AU-DESSUS ou alignée
+        return False, None
     
     def run(self, debug=True):
         """Lance le bot avec calibration automatique"""
@@ -275,16 +300,43 @@ class GPOFishingBotV3:
                 gray_y = self.find_gray_zone_y(blue_frame)
                 progress = self.get_green_bar_progress(green_frame)
                 
-                # Décision
-                should_hold = self.should_click(gray_y, white_y)
+                # 🆕 Décision avec ajustement proportionnel
+                should_hold, click_type = self.should_click(gray_y, white_y)
+                current_time = time.time()
                 
-                # Action
-                if should_hold and not self.is_clicking:
-                    pyautogui.mouseDown()
-                    self.is_clicking = True
-                elif not should_hold and self.is_clicking:
-                    pyautogui.mouseUp()
-                    self.is_clicking = False
+                # Système de clics proportionnels
+                if should_hold:
+                    if click_type == "long":
+                        # Distance grande : maintenir le clic
+                        if not self.is_clicking:
+                            pyautogui.mouseDown()
+                            self.is_clicking = True
+                            self.last_click_time = current_time
+                    
+                    elif click_type == "medium":
+                        # Distance moyenne : clics de 0.1-0.15s
+                        if not self.is_clicking and (current_time - self.last_click_time) > 0.15:
+                            pyautogui.mouseDown()
+                            self.is_clicking = True
+                            self.last_click_time = current_time
+                        elif self.is_clicking and (current_time - self.last_click_time) > 0.1:
+                            pyautogui.mouseUp()
+                            self.is_clicking = False
+                    
+                    elif click_type == "short":
+                        # Distance petite : micro-clics de 0.05s
+                        if not self.is_clicking and (current_time - self.last_click_time) > 0.1:
+                            pyautogui.mouseDown()
+                            self.is_clicking = True
+                            self.last_click_time = current_time
+                        elif self.is_clicking and (current_time - self.last_click_time) > 0.05:
+                            pyautogui.mouseUp()
+                            self.is_clicking = False
+                else:
+                    # Relâcher complètement quand pas besoin de monter
+                    if self.is_clicking:
+                        pyautogui.mouseUp()
+                        self.is_clicking = False
                 
                 # Debug visuel
                 if debug:
@@ -322,8 +374,17 @@ class GPOFishingBotV3:
                     info_y += 40
                     if white_y and gray_y:
                         distance = gray_y - white_y
+                        dist_color = (0, 255, 0) if abs(distance) < 20 else (255, 255, 0) if abs(distance) < 50 else (0, 165, 255)
                         cv2.putText(debug_view, f"Distance: {distance}px", (450, info_y),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, dist_color, 2)
+                    
+                    info_y += 40
+                    # Afficher le type de clic
+                    if click_type:
+                        type_text = {"long": "LONG", "medium": "MEDIUM", "short": "SHORT"}.get(click_type, "NONE")
+                        type_color = {"long": (0, 165, 255), "medium": (255, 255, 0), "short": (0, 255, 0)}.get(click_type, (128, 128, 128))
+                        cv2.putText(debug_view, f"Mode: {type_text}", (450, info_y),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, type_color, 2)
                     
                     info_y += 60
                     cv2.putText(debug_view, "BARRE BLEUE", (100, 470),
@@ -336,8 +397,9 @@ class GPOFishingBotV3:
                 # FPS Counter
                 fps_counter += 1
                 if time.time() - fps_start >= 1.0:
+                    mode_str = click_type if click_type else "NONE"
                     print(f"FPS: {fps_counter:2d} | Progress: {progress:5.1f}% | " +
-                          f"Click: {'YES' if self.is_clicking else 'NO '} | " +
+                          f"Click: {'YES' if self.is_clicking else 'NO '} | Mode: {mode_str:>6} | " +
                           f"White: {white_y or 'N/A':>4} | Gray: {gray_y or 'N/A':>4}")
                     fps_counter = 0
                     fps_start = time.time()
@@ -370,7 +432,7 @@ if __name__ == "__main__":
     bot = GPOFishingBotV3()
     
     print("\n" + "="*50)
-    print("LANCEMENT DU BOT - VERSION AUTO-CALIBRATION")
+    print("LANCEMENT DU BOT - VERSION CLICS PROPORTIONNELS")
     print("="*50)
     
     bot.run(debug=True)
