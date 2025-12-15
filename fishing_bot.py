@@ -27,6 +27,7 @@ class GPOFishingBotV3:
         
         # Paramètres de détection
         self.offset_anticipation = 15
+        self.target_offset = 15  # 🆕 Cible 15px en dessous du haut de la zone grise
         self.calibrated = False
         
         # 🆕 Système de clics proportionnels
@@ -235,6 +236,8 @@ class GPOFishingBotV3:
         """
         🆕 Décide si on doit cliquer avec ajustement proportionnel
         
+        Objectif : Positionner la zone grise pour que la cible soit 15px en dessous de son haut
+        
         Logique :
         - Distance grande (>50px) : maintenir le clic
         - Distance moyenne (20-50px) : clics modérés
@@ -243,11 +246,13 @@ class GPOFishingBotV3:
         if gray_y is None or white_y is None:
             return False, None
         
-        # Calculer la distance (positif = gris en dessous, négatif = gris au-dessus)
-        distance = gray_y - white_y
+        # 🆕 Calculer la distance en tenant compte qu'on veut la cible 15px sous la zone grise
+        # Si gray_y = 100 et white_y = 115, alors distance = 0 (parfait !)
+        # Si gray_y = 100 et white_y = 130, alors distance = 15 (faut monter)
+        distance = (gray_y + self.target_offset) - white_y
         
-        # Si la zone grise est EN DESSOUS de la cible (distance > 0)
-        if distance > self.offset_anticipation:
+        # Si la distance est positive, la zone grise est trop basse (faut monter)
+        if distance > 5:  # Tolérance de 5px
             # Plus la distance est grande, plus on maintient longtemps
             if distance > 50:
                 return True, "long"  # Maintenir le clic longtemps
@@ -256,7 +261,7 @@ class GPOFishingBotV3:
             else:
                 return True, "short"  # Micro-clic
         
-        # Si la zone grise est AU-DESSUS ou alignée
+        # Si la zone grise est bien placée ou trop haute
         return False, None
     
     def run(self, debug=True):
@@ -373,7 +378,8 @@ class GPOFishingBotV3:
                     
                     info_y += 40
                     if white_y and gray_y:
-                        distance = gray_y - white_y
+                        # Calculer la distance réelle (avec offset de 15px)
+                        distance = (gray_y + self.target_offset) - white_y
                         dist_color = (0, 255, 0) if abs(distance) < 20 else (255, 255, 0) if abs(distance) < 50 else (0, 165, 255)
                         cv2.putText(debug_view, f"Distance: {distance}px", (450, info_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, dist_color, 2)
@@ -385,6 +391,11 @@ class GPOFishingBotV3:
                         type_color = {"long": (0, 165, 255), "medium": (255, 255, 0), "short": (0, 255, 0)}.get(click_type, (128, 128, 128))
                         cv2.putText(debug_view, f"Mode: {type_text}", (450, info_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, type_color, 2)
+                    
+                    info_y += 40
+                    # Afficher l'offset cible
+                    cv2.putText(debug_view, f"Target: -{self.target_offset}px", (450, info_y),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
                     
                     info_y += 60
                     cv2.putText(debug_view, "BARRE BLEUE", (100, 470),
