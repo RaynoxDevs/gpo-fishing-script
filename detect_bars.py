@@ -7,174 +7,223 @@ class BarDetector:
     def __init__(self):
         self.sct = mss.mss()
         
-    def capture_full_screen(self):
-        """Capture tout l'écran"""
-        monitor = self.sct.monitors[1]  # Écran principal
+    def capture_screen_without_window(self):
+        """Capture l'écran en excluant une zone pour éviter l'effet miroir"""
+        monitor = self.sct.monitors[1]
         screenshot = self.sct.grab(monitor)
         frame = np.array(screenshot)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     
-    def find_bars(self, frame, debug=True):
+    def find_blue_bar_region(self, frame):
         """
-        Détecte les deux barres (bleue et verte) en cherchant les contours noirs verticaux
-        
-        Retourne:
-        - blue_bar: dict avec {x, y, width, height} ou None
-        - green_bar: dict avec {x, y, width, height} ou None
+        Trouve la région de la barre bleue en détectant sa couleur bleue claire distinctive
         """
-        # Convertir en niveaux de gris
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
-        # Détecter les zones très sombres/noires (contours des barres)
-        # Les contours sont vraiment noirs (#000000 ou proche)
-        _, binary = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY_INV)
+        # Détecter le bleu clair de la barre (ajusté pour le bleu clair qu'on voit sur ton screen)
+        # Bleu clair : HSV environ [100-120, 100-255, 150-255]
+        lower_blue = np.array([90, 80, 120])
+        upper_blue = np.array([130, 255, 255])
         
-        # Trouver les contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
         
-        # Filtrer pour trouver des rectangles verticaux
-        candidates = []
+        # Nettoyer le masque avec morphologie
+        kernel = np.ones((5, 5), np.uint8)
+        mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_CLOSE, kernel)
+        mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_OPEN, kernel)
+        
+        # Trouver les contours des zones bleues
+        contours, _ = cv2.findContours(mask_blue, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Chercher un contour vertical (barre)
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            
+            # Critères : hauteur > largeur, taille minimale, ratio vertical
+            if h > 150 and w > 10 and h > w * 5:
+                # Agrandir légèrement la bbox pour inclure les contours noirs
+                padding = 5
+                return {
+                    'x': max(0, x - padding),
+                    'y': max(0, y - padding),
+                    'width': w + padding * 2,
+                    'height': h + padding * 2
+                }
+        
+        return None
+    
+    def find_green_bar_near_blue(self, frame, blue_bar):
+        """
+        Cherche la barre verte à droite de la barre bleue
+        """
+        if not blue_bar:
+            return None
+        
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Détecter le vert de la barre de progression
+        lower_green = np.array([35, 50, 50])
+        upper_green = np.array([85, 255, 255])
+        
+        # Chercher seulement à droite de la barre bleue
+        search_x_start = blue_bar['x'] + blue_bar['width']
+        search_x_end = min(search_x_start + 200, frame.shape[1])
+        
+        # Extraire la région de recherche
+        search_region = hsv[blue_bar['y']:blue_bar['y'] + blue_bar['height'], 
+                           search_x_start:search_x_end]
+        
+        mask_green = cv2.inRange(search_region, lower_green, upper_green)
+        
+        # Nettoyer
+        kernel = np.ones((3, 3), np.uint8)
+        mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_CLOSE, kernel)
+        
+        # Trouver les contours verts
+        contours, _ = cv2.findContours(mask_green, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Chercher un contour vertical
+        best_contour = None
+        max_height = 0
         
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
             
-            # Critères pour être une barre :
-            # 1. Hauteur > largeur (vertical)
-            # 2. Hauteur minimum (au moins 200px)
-            # 3. Largeur raisonnable (entre 15 et 50px)
-            # 4. Ratio hauteur/largeur élevé (au moins 8:1)
-            
-            if h > 200 and 15 < w < 50 and h > w * 8:
-                candidates.append({
-                    'x': x,
-                    'y': y,
+            # Critères : vertical, hauteur raisonnable
+            if h > 100 and h > max_height:
+                max_height = h
+                best_contour = {
+                    'x': search_x_start + x,
+                    'y': blue_bar['y'] + y,
                     'width': w,
-                    'height': h,
-                    'area': w * h,
-                    'ratio': h / w
-                })
+                    'height': h
+                }
         
-        # Trier les candidats par position X (gauche à droite)
-        candidates.sort(key=lambda c: c['x'])
+        # Si on ne trouve pas de vert (barre vide), chercher la structure noire
+        if not best_contour:
+            # Chercher un rectangle noir vertical à droite de la barre bleue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            search_gray = gray[blue_bar['y']:blue_bar['y'] + blue_bar['height'],
+                              search_x_start:search_x_end]
+            
+            _, binary = cv2.threshold(search_gray, 40, 255, cv2.THRESH_BINARY_INV)
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+                
+                if h > 150 and 10 < w < 40 and h > w * 5:
+                    best_contour = {
+                        'x': search_x_start + x,
+                        'y': blue_bar['y'] + y,
+                        'width': w,
+                        'height': h
+                    }
+                    break
         
-        # Les deux barres devraient être côte à côte
-        blue_bar = None
+        return best_contour
+    
+    def find_bars(self, frame):
+        """
+        Pipeline complet : trouve d'abord la bleue, puis la verte à côté
+        """
+        blue_bar = self.find_blue_bar_region(frame)
         green_bar = None
         
-        # Chercher deux rectangles proches l'un de l'autre
-        for i in range(len(candidates)):
-            for j in range(i + 1, len(candidates)):
-                bar1 = candidates[i]
-                bar2 = candidates[j]
-                
-                # Vérifier qu'ils sont à peu près à la même hauteur Y
-                y_diff = abs(bar1['y'] - bar2['y'])
-                
-                # Vérifier qu'ils sont proches horizontalement
-                x_distance = bar2['x'] - (bar1['x'] + bar1['width'])
-                
-                # Si les barres sont alignées verticalement et proches horizontalement
-                if y_diff < 100 and 10 < x_distance < 200:
-                    # La barre la plus large est probablement la bleue
-                    if bar1['width'] > bar2['width']:
-                        blue_bar = bar1
-                        green_bar = bar2
-                    else:
-                        blue_bar = bar2
-                        green_bar = bar1
-                    break
-            
-            if blue_bar and green_bar:
-                break
+        if blue_bar:
+            green_bar = self.find_green_bar_near_blue(frame, blue_bar)
         
-        # Debug visuel
-        if debug:
-            debug_frame = frame.copy()
-            
-            if blue_bar:
-                cv2.rectangle(debug_frame, 
-                            (blue_bar['x'], blue_bar['y']),
-                            (blue_bar['x'] + blue_bar['width'], blue_bar['y'] + blue_bar['height']),
-                            (255, 0, 0), 3)
-                cv2.putText(debug_frame, "BARRE BLEUE", 
-                           (blue_bar['x'], blue_bar['y'] - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-            
-            if green_bar:
-                cv2.rectangle(debug_frame, 
-                            (green_bar['x'], green_bar['y']),
-                            (green_bar['x'] + green_bar['width'], green_bar['y'] + green_bar['height']),
-                            (0, 255, 0), 3)
-                cv2.putText(debug_frame, "BARRE VERTE", 
-                           (green_bar['x'], green_bar['y'] - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            return blue_bar, green_bar, debug_frame
-        
-        return blue_bar, green_bar, None
+        return blue_bar, green_bar
     
     def run_detection_test(self):
-        """Lance un test en temps réel de la détection"""
+        """Lance le test de détection en temps réel"""
         print("=" * 60)
-        print("DÉTECTION AUTOMATIQUE DES BARRES - TEST")
+        print("DÉTECTION AUTOMATIQUE DES BARRES - VERSION 2")
         print("=" * 60)
-        print("\nPlace-toi devant le mini-jeu de pêche!")
-        print("La détection va commencer dans 3 secondes...\n")
-        print("Commandes:")
+        print("\n📌 Instructions:")
+        print("  1. Lance le jeu Roblox GPO")
+        print("  2. Place-toi devant le mini-jeu de pêche")
+        print("  3. Les barres vont être détectées automatiquement\n")
+        print("🎮 Commandes:")
         print("  'q' = Quitter")
-        print("  's' = Sauvegarder les coordonnées détectées\n")
+        print("  's' = Sauvegarder les coordonnées\n")
+        print("Démarrage dans 3 secondes...\n")
         
         time.sleep(3)
         
-        cv2.namedWindow("Detection Test", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Detection Test", 1280, 720)
+        # Créer une petite fenêtre pour éviter l'effet miroir
+        window_name = "Detection"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 800, 600)
+        cv2.moveWindow(window_name, 50, 50)
         
         last_blue = None
         last_green = None
+        frame_count = 0
         
         try:
             while True:
+                frame_count += 1
+                
                 # Capturer l'écran
-                frame = self.capture_full_screen()
+                frame = self.capture_screen_without_window()
                 
-                # Détecter les barres
-                blue_bar, green_bar, debug_frame = self.find_bars(frame, debug=True)
+                # Détecter les barres (pas besoin à chaque frame pour l'affichage)
+                if frame_count % 3 == 0:  # Toutes les 3 frames pour la détection
+                    blue_bar, green_bar = self.find_bars(frame)
+                    
+                    if blue_bar:
+                        last_blue = blue_bar
+                    if green_bar:
+                        last_green = green_bar
                 
-                # Mettre à jour les dernières détections valides
-                if blue_bar:
-                    last_blue = blue_bar
-                if green_bar:
-                    last_green = green_bar
+                # Créer une vue debug réduite
+                scale = 0.5
+                debug_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
                 
-                # Afficher les infos dans la console
-                if blue_bar and green_bar:
-                    print(f"\r✅ BARRES DÉTECTÉES | Bleue: {blue_bar['width']}x{blue_bar['height']} @ ({blue_bar['x']},{blue_bar['y']}) | "
-                          f"Verte: {green_bar['width']}x{green_bar['height']} @ ({green_bar['x']},{green_bar['y']})    ", end='')
+                # Dessiner les détections (ajuster pour le scale)
+                if last_blue:
+                    x, y, w, h = (int(last_blue['x'] * scale), int(last_blue['y'] * scale),
+                                 int(last_blue['width'] * scale), int(last_blue['height'] * scale))
+                    cv2.rectangle(debug_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                    cv2.putText(debug_frame, "BLEUE", (x, y - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                
+                if last_green:
+                    x, y, w, h = (int(last_green['x'] * scale), int(last_green['y'] * scale),
+                                 int(last_green['width'] * scale), int(last_green['height'] * scale))
+                    cv2.rectangle(debug_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.putText(debug_frame, "VERTE", (x, y - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                
+                # Afficher le statut
+                status = "✅ DÉTECTÉ" if (last_blue and last_green) else "⏳ RECHERCHE..."
+                color = (0, 255, 0) if (last_blue and last_green) else (0, 165, 255)
+                cv2.putText(debug_frame, status, (20, 40),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                
+                cv2.imshow(window_name, debug_frame)
+                
+                # Console output
+                if last_blue and last_green:
+                    print(f"\r✅ DÉTECTION OK | Bleue: {last_blue['width']}x{last_blue['height']} @ ({last_blue['x']},{last_blue['y']}) | "
+                          f"Verte: {last_green['width']}x{last_green['height']} @ ({last_green['x']},{last_green['y']})    ", end='')
                 else:
-                    print(f"\r⚠️  RECHERCHE EN COURS... (Assure-toi d'être devant le mini-jeu)    ", end='')
+                    print(f"\r⏳ Recherche des barres... (Assure-toi d'être devant le mini-jeu!)    ", end='')
                 
-                # Afficher le debug
-                if debug_frame is not None:
-                    # Redimensionner pour l'affichage
-                    scale = 0.7
-                    width = int(debug_frame.shape[1] * scale)
-                    height = int(debug_frame.shape[0] * scale)
-                    resized = cv2.resize(debug_frame, (width, height))
-                    cv2.imshow("Detection Test", resized)
-                
-                # Gestion des touches
-                key = cv2.waitKey(1) & 0xFF
+                # Touches
+                key = cv2.waitKey(30) & 0xFF
                 
                 if key == ord('q'):
                     break
                 
                 elif key == ord('s'):
                     if last_blue and last_green:
-                        print("\n\n" + "=" * 60)
-                        print("📋 COORDONNÉES DÉTECTÉES - COPIE ÇA DANS TON BOT:")
-                        print("=" * 60)
+                        print("\n\n" + "=" * 70)
+                        print("📋 COORDONNÉES DÉTECTÉES - COPIE ÇA DANS fishing_bot.py")
+                        print("=" * 70)
                         print(f"""
-# Barre bleue (zone de contrôle)
+# Zones calibrées automatiquement
 self.blue_bar = {{
     "top": {last_blue['y']},
     "left": {last_blue['x']},
@@ -182,7 +231,6 @@ self.blue_bar = {{
     "height": {last_blue['height']}
 }}
 
-# Barre verte (progression)
 self.green_bar = {{
     "top": {last_green['y']},
     "left": {last_green['x']},
@@ -190,20 +238,19 @@ self.green_bar = {{
     "height": {last_green['height']}
 }}
 """)
-                        print("=" * 60)
-                        print("✅ Coordonnées sauvegardées! Tu peux maintenant les copier.")
+                        print("=" * 70)
+                        print("✅ Coordonnées prêtes! Copie-les dans ton bot.")
                         print("   Appuie sur 'q' pour quitter.\n")
                     else:
-                        print("\n⚠️  Aucune barre détectée pour l'instant!\n")
+                        print("\n⚠️  Aucune barre détectée! Place-toi devant le mini-jeu.\n")
         
         except KeyboardInterrupt:
-            print("\n\n⚠️ Arrêt demandé par l'utilisateur")
+            print("\n\n⚠️ Arrêt manuel")
         
         finally:
             cv2.destroyAllWindows()
-            print("\n✅ Détection terminée")
+            print("\n✅ Test terminé")
 
-# === POINT D'ENTRÉE ===
 if __name__ == "__main__":
     detector = BarDetector()
     detector.run_detection_test()
