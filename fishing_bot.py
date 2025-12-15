@@ -4,7 +4,7 @@ import mss
 import pyautogui
 import time
 
-class GPOFishingBotV3:
+class GPOFishingBotV4:
     def __init__(self):
         self.sct = mss.mss()
         self.running = False
@@ -26,13 +26,14 @@ class GPOFishingBotV3:
         self.green_bar = None
         
         # Paramètres de détection
-        self.offset_anticipation = 15
-        self.target_offset = 15  # 🆕 Cible 15px en dessous du haut de la zone grise
+        self.target_offset = 20  # 🎯 Zone grise doit être 20px AU-DESSUS du marqueur blanc
+        self.tolerance = 5       # Tolérance en pixels (zone "OK")
         self.calibrated = False
         
-        # 🆕 Système de clics proportionnels
+        # Système de clics avec contrôle proportionnel
         self.last_click_time = 0
-        self.click_cooldown = 0.05  # Temps minimum entre changements (50ms)
+        self.last_action_time = 0
+        self.click_interval = 0.1  # Intervalle entre les micro-clics (100ms = 10 CPS)
         
     def auto_calibrate(self):
         """
@@ -234,40 +235,54 @@ class GPOFishingBotV3:
     
     def should_click(self, gray_y, white_y):
         """
-        🆕 Décide si on doit cliquer avec ajustement proportionnel
+        🎯 CONTRÔLE PROPORTIONNEL - Comme un hélicoptère !
         
-        Objectif : Positionner la zone grise pour que la cible soit 15px en dessous de son haut
+        Objectif : Maintenir la zone grise à 20px AU-DESSUS du marqueur blanc
         
-        Logique :
-        - Distance grande (>50px) : maintenir le clic
-        - Distance moyenne (20-50px) : clics modérés
-        - Distance petite (<20px) : micro-ajustements
+        Stratégie :
+        - Distance GRANDE (>50px) : Clic MAINTENU (monter vite)
+        - Distance MOYENNE (20-50px) : Clics RAPIDES 80% du temps (monter doucement)
+        - Distance PETITE (5-20px) : Clics à 50% du temps (MAINTENIR/HOVER)
+        - Distance PARFAITE (<5px) : Clics à 30% du temps (stabiliser)
+        - Trop HAUT (<-5px) : Relâcher complètement (descendre)
+        
+        Le "duty cycle" (% de temps où on clique) détermine si on monte, descend, ou maintient
         """
         if gray_y is None or white_y is None:
-            return False, None
+            return False, None, 0
         
-        # 🆕 Calculer la distance en tenant compte qu'on veut la cible 15px sous la zone grise
-        # Si gray_y = 100 et white_y = 115, alors distance = 0 (parfait !)
-        # Si gray_y = 100 et white_y = 130, alors distance = 15 (faut monter)
-        distance = (gray_y + self.target_offset) - white_y
+        # Position cible : 20px au-dessus du marqueur blanc
+        target_gray_y = white_y - self.target_offset
         
-        # Si la distance est positive, la zone grise est trop basse (faut monter)
-        if distance > 5:  # Tolérance de 5px
-            # Plus la distance est grande, plus on maintient longtemps
-            if distance > 50:
-                return True, "long"  # Maintenir le clic longtemps
-            elif distance > 20:
-                return True, "medium"  # Clic moyen
-            else:
-                return True, "short"  # Micro-clic
+        # Distance = combien on est loin de la position idéale
+        distance = gray_y - target_gray_y
         
-        # Si la zone grise est bien placée ou trop haute
-        return False, None
+        # CONTRÔLE PROPORTIONNEL basé sur la distance
+        if distance > 50:
+            # TRÈS LOIN : Monter vite (clic maintenu)
+            return True, "long", 100  # 100% duty cycle
+        
+        elif distance > 20:
+            # LOIN : Monter activement (clics rapides à 80%)
+            return True, "fast", 80  # 80% duty cycle
+        
+        elif distance > 5:
+            # PROCHE : MAINTENIR la position (clics à 50% = hover mode)
+            return True, "hover", 50  # 50% duty cycle = ne bouge pas
+        
+        elif distance > -5:
+            # ZONE PARFAITE : Micro-ajustements pour stabiliser (30%)
+            return True, "stable", 30  # 30% duty cycle = descend très légèrement
+        
+        else:
+            # TROP HAUT : Relâcher complètement (descendre)
+            return False, None, 0  # 0% duty cycle
+    
     
     def run(self, debug=True):
         """Lance le bot avec calibration automatique"""
         print("=" * 50)
-        print("GPO AUTO FISHING BOT V3 - AUTO-CALIBRATION")
+        print("GPO AUTO FISHING BOT V4 - CONTRÔLE PROPORTIONNEL")
         print("=" * 50)
         
         # 🔧 PHASE 1 : CALIBRATION
@@ -279,6 +294,15 @@ class GPOFishingBotV3:
         print("\n" + "=" * 50)
         print("🎣 DÉMARRAGE DU BOT")
         print("=" * 50)
+        print("\n🎯 Logique : Contrôle proportionnel (comme un hélicoptère)")
+        print("   - Zone grise maintenue à 20px AU-DESSUS du marqueur blanc")
+        print("   - Duty cycle adaptatif selon la distance :")
+        print("     • 100% = Monter vite (clic maintenu)")
+        print("     • 80%  = Monter doucement")
+        print("     • 50%  = MAINTENIR position (hover mode)")
+        print("     • 30%  = Stabiliser")
+        print("     • 0%   = Descendre")
+        print("\n📊 Tolérance : ±5px | Fréquence : 10 CPS max")
         print("\nCommandes:")
         print("  'q' = Arrêter le bot")
         print("\nDémarrage dans 3 secondes...\n")
@@ -305,43 +329,51 @@ class GPOFishingBotV3:
                 gray_y = self.find_gray_zone_y(blue_frame)
                 progress = self.get_green_bar_progress(green_frame)
                 
-                # 🆕 Décision avec ajustement proportionnel
-                should_hold, click_type = self.should_click(gray_y, white_y)
+                # Décision avec contrôle proportionnel (duty cycle)
+                should_hold, click_type, duty_cycle = self.should_click(gray_y, white_y)
                 current_time = time.time()
                 
-                # Système de clics proportionnels
+                # SYSTÈME DE DUTY CYCLE (contrôle proportionnel)
+                # Le duty cycle détermine le % de temps où on clique
+                # 100% = clic maintenu (monter vite)
+                # 50% = clic/relâche alterné (maintenir position)
+                # 0% = relâché (descendre)
+                
                 if should_hold:
                     if click_type == "long":
-                        # Distance grande : maintenir le clic
+                        # 100% duty cycle : clic maintenu
                         if not self.is_clicking:
                             pyautogui.mouseDown()
                             self.is_clicking = True
                             self.last_click_time = current_time
                     
-                    elif click_type == "medium":
-                        # Distance moyenne : clics de 0.1-0.15s
-                        if not self.is_clicking and (current_time - self.last_click_time) > 0.15:
-                            pyautogui.mouseDown()
-                            self.is_clicking = True
-                            self.last_click_time = current_time
-                        elif self.is_clicking and (current_time - self.last_click_time) > 0.1:
-                            pyautogui.mouseUp()
-                            self.is_clicking = False
-                    
-                    elif click_type == "short":
-                        # Distance petite : micro-clics de 0.05s
-                        if not self.is_clicking and (current_time - self.last_click_time) > 0.1:
-                            pyautogui.mouseDown()
-                            self.is_clicking = True
-                            self.last_click_time = current_time
-                        elif self.is_clicking and (current_time - self.last_click_time) > 0.05:
-                            pyautogui.mouseUp()
-                            self.is_clicking = False
+                    else:
+                        # Clics proportionnels basés sur le duty cycle
+                        # Intervalle = 0.1s (10 CPS max)
+                        # Durée du clic = duty_cycle% de l'intervalle
+                        click_duration = self.click_interval * (duty_cycle / 100.0)
+                        release_duration = self.click_interval - click_duration
+                        
+                        time_since_action = current_time - self.last_action_time
+                        
+                        if not self.is_clicking:
+                            # On est relâché, temps de cliquer ?
+                            if time_since_action >= release_duration:
+                                pyautogui.mouseDown()
+                                self.is_clicking = True
+                                self.last_action_time = current_time
+                        else:
+                            # On est en train de cliquer, temps de relâcher ?
+                            if time_since_action >= click_duration:
+                                pyautogui.mouseUp()
+                                self.is_clicking = False
+                                self.last_action_time = current_time
                 else:
-                    # Relâcher complètement quand pas besoin de monter
+                    # Relâcher complètement (trop haut)
                     if self.is_clicking:
                         pyautogui.mouseUp()
                         self.is_clicking = False
+                        self.last_action_time = current_time
                 
                 # Debug visuel
                 if debug:
@@ -359,6 +391,15 @@ class GPOFishingBotV3:
                                 (255, 255, 255), 3)
                         cv2.putText(debug_view, "CIBLE", (260, white_y_scaled), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                        
+                        # Dessiner la position cible (20px au-dessus) en pointillés
+                        target_y_scaled = int(((white_y - self.target_offset) / self.blue_bar["height"]) * 400) + 50
+                        # Ligne en pointillés (dessinée manuellement)
+                        for x in range(50, 250, 10):
+                            cv2.line(debug_view, (x, target_y_scaled), (min(x+5, 250), target_y_scaled), 
+                                    (0, 255, 0), 2)
+                        cv2.putText(debug_view, "TARGET", (260, target_y_scaled), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                     
                     if gray_y is not None:
                         gray_y_scaled = int((gray_y / self.blue_bar["height"]) * 400) + 50
@@ -378,23 +419,24 @@ class GPOFishingBotV3:
                     
                     info_y += 40
                     if white_y and gray_y:
-                        # Calculer la distance réelle (avec offset de 15px)
-                        distance = (gray_y + self.target_offset) - white_y
-                        dist_color = (0, 255, 0) if abs(distance) < 20 else (255, 255, 0) if abs(distance) < 50 else (0, 165, 255)
-                        cv2.putText(debug_view, f"Distance: {distance}px", (450, info_y),
+                        # Calculer la distance réelle
+                        target_gray_y = white_y - self.target_offset
+                        distance = gray_y - target_gray_y
+                        dist_color = (0, 255, 0) if abs(distance) <= self.tolerance else (255, 255, 0) if abs(distance) < 20 else (0, 165, 255)
+                        cv2.putText(debug_view, f"Distance: {distance:+.0f}px", (450, info_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, dist_color, 2)
                     
                     info_y += 40
-                    # Afficher le type de clic
+                    # Afficher le type de clic et duty cycle
                     if click_type:
-                        type_text = {"long": "LONG", "medium": "MEDIUM", "short": "SHORT"}.get(click_type, "NONE")
-                        type_color = {"long": (0, 165, 255), "medium": (255, 255, 0), "short": (0, 255, 0)}.get(click_type, (128, 128, 128))
-                        cv2.putText(debug_view, f"Mode: {type_text}", (450, info_y),
+                        type_text = {"long": "LONG", "fast": "FAST", "hover": "HOVER", "stable": "STABLE"}.get(click_type, "NONE")
+                        type_color = {"long": (0, 165, 255), "fast": (255, 255, 0), "hover": (0, 255, 0), "stable": (128, 255, 128)}.get(click_type, (128, 128, 128))
+                        cv2.putText(debug_view, f"Mode: {type_text} ({duty_cycle}%)", (450, info_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, type_color, 2)
                     
                     info_y += 40
-                    # Afficher l'offset cible
-                    cv2.putText(debug_view, f"Target: -{self.target_offset}px", (450, info_y),
+                    # Afficher la configuration
+                    cv2.putText(debug_view, f"Target: -{self.target_offset}px | Tol: {self.tolerance}px", (450, info_y),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
                     
                     info_y += 60
@@ -408,10 +450,11 @@ class GPOFishingBotV3:
                 # FPS Counter
                 fps_counter += 1
                 if time.time() - fps_start >= 1.0:
-                    mode_str = click_type if click_type else "NONE"
+                    mode_str = f"{click_type}({duty_cycle}%)" if click_type else "NONE"
+                    dist_str = f"{gray_y - (white_y - self.target_offset):+.0f}px" if (white_y and gray_y) else "N/A"
                     print(f"FPS: {fps_counter:2d} | Progress: {progress:5.1f}% | " +
-                          f"Click: {'YES' if self.is_clicking else 'NO '} | Mode: {mode_str:>6} | " +
-                          f"White: {white_y or 'N/A':>4} | Gray: {gray_y or 'N/A':>4}")
+                          f"Click: {'YES' if self.is_clicking else 'NO '} | Mode: {mode_str:>14} | " +
+                          f"Dist: {dist_str:>6} | White: {white_y or 'N/A':>4} | Gray: {gray_y or 'N/A':>4}")
                     fps_counter = 0
                     fps_start = time.time()
                 
@@ -440,10 +483,10 @@ class GPOFishingBotV3:
 
 # === POINT D'ENTRÉE ===
 if __name__ == "__main__":
-    bot = GPOFishingBotV3()
+    bot = GPOFishingBotV4()
     
     print("\n" + "="*50)
-    print("LANCEMENT DU BOT - VERSION CLICS PROPORTIONNELS")
+    print("🚁 LANCEMENT DU BOT V4 - CONTRÔLE PROPORTIONNEL")
     print("="*50)
     
     bot.run(debug=True)
