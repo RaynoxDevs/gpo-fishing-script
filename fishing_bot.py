@@ -3,211 +3,267 @@ import numpy as np
 import mss
 import pyautogui
 import time
-from PIL import Image
 
-class GPOFishingBot:
+class GPOFishingBotV2:
     def __init__(self):
         self.sct = mss.mss()
         self.running = False
-        
-        # Zone de capture calibrée
-        # Format: {"top": y, "left": x, "width": w, "height": h}
-        self.capture_region = {
-            "top": 414,    # Position Y du haut de la zone
-            "left": 1118,  # Position X du début de la zone
-            "width": 125,  # Largeur de la zone à capturer
-            "height": 429  # Hauteur de la zone à capturer
-        }
-        
         self.is_clicking = False
         
-    def find_white_bar_position(self, frame):
-        """Trouve la position Y de la barre blanche (cible)"""
-        # Convertir en HSV pour mieux détecter le blanc
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        # ZONES FIXES CALIBRÉES
+        # Barre bleue (zone de contrôle)
+        self.blue_bar = {
+            "top": 416,
+            "left": 1136,
+            "width": 27,    # 1163 - 1136
+            "height": 423   # 839 - 416
+        }
         
-        # Masque pour détecter le blanc/couleur claire
-        lower_white = np.array([0, 0, 200])
-        upper_white = np.array([180, 30, 255])
+        # Barre verte (progression)
+        self.green_bar = {
+            "top": 468,
+            "left": 1200,
+            "width": 22,    # 1222 - 1200
+            "height": 319   # 787 - 468
+        }
+        
+        # Paramètres de détection
+        self.offset_anticipation = 15  # Pixels d'anticipation pour le clic
+        
+    def capture_blue_bar(self):
+        """Capture uniquement la barre bleue"""
+        screenshot = self.sct.grab(self.blue_bar)
+        frame = np.array(screenshot)
+        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    
+    def capture_green_bar(self):
+        """Capture uniquement la barre verte"""
+        screenshot = self.sct.grab(self.green_bar)
+        frame = np.array(screenshot)
+        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    
+    def find_white_marker_y(self, blue_frame):
+        """
+        Trouve la position Y du marqueur blanc (poisson) dans la barre bleue.
+        Retourne la position relative (0 = haut de la barre, height = bas)
+        """
+        # Convertir en HSV pour mieux détecter le blanc
+        hsv = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2HSV)
+        
+        # Masque pour le blanc (marqueur poisson)
+        lower_white = np.array([0, 0, 180])
+        upper_white = np.array([180, 50, 255])
         mask = cv2.inRange(hsv, lower_white, upper_white)
         
-        # Trouver les contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # Prendre le plus grand contour (probablement la barre)
-            largest_contour = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            return y + h // 2  # Retourne le centre Y de la barre
+        # Trouver le centre de masse des pixels blancs
+        moments = cv2.moments(mask)
+        if moments["m00"] > 0:
+            cy = int(moments["m01"] / moments["m00"])
+            return cy
         
         return None
     
-    def find_gray_bar_position(self, frame):
-        """Trouve la position Y de la barre grise (contrôlée)"""
+    def find_gray_zone_y(self, blue_frame):
+        """
+        Trouve la position Y de la zone grise (que tu contrôles).
+        Retourne la position relative du centre de la zone grise.
+        """
         # Convertir en niveaux de gris
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2GRAY)
         
-        # Détecter les zones grises (ta barre de contrôle)
-        lower_gray = 80
-        upper_gray = 150
+        # Masque pour la zone grise/foncée de contrôle
+        # Ajuster ces valeurs si la détection ne marche pas
+        lower_gray = 60
+        upper_gray = 140
         mask = cv2.inRange(gray, lower_gray, upper_gray)
         
-        # Trouver les contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            return y + h // 2
+        # Trouver le centre de masse
+        moments = cv2.moments(mask)
+        if moments["m00"] > 0:
+            cy = int(moments["m01"] / moments["m00"])
+            return cy
         
         return None
     
-    def check_green_bar(self, frame):
-        """Vérifie le niveau de la barre verte (progression)"""
-        # Isoler la partie droite où se trouve la barre verte
-        right_section = frame[:, -50:]
+    def get_green_bar_progress(self, green_frame):
+        """
+        Calcule le pourcentage de remplissage de la barre verte.
+        Retourne un float entre 0.0 et 100.0
+        """
+        # Convertir en HSV
+        hsv = cv2.cvtColor(green_frame, cv2.COLOR_BGR2HSV)
         
-        # Détecter le vert
-        hsv = cv2.cvtColor(right_section, cv2.COLOR_BGR2HSV)
-        lower_green = np.array([40, 50, 50])
-        upper_green = np.array([80, 255, 255])
+        # Masque pour le vert
+        lower_green = np.array([35, 50, 50])
+        upper_green = np.array([85, 255, 255])
         mask = cv2.inRange(hsv, lower_green, upper_green)
         
-        # Calculer le pourcentage de pixels verts
+        # Compter les pixels verts par rapport au total
         green_pixels = np.sum(mask > 0)
         total_pixels = mask.shape[0] * mask.shape[1]
-        percentage = (green_pixels / total_pixels) * 100
         
-        return percentage
+        if total_pixels > 0:
+            percentage = (green_pixels / total_pixels) * 100
+            return percentage
+        
+        return 0.0
     
-    def should_hold_click(self, gray_pos, white_pos):
-        """Détermine si on doit maintenir le clic"""
-        if gray_pos is None or white_pos is None:
+    def should_click(self, gray_y, white_y):
+        """
+        Décide si on doit cliquer ou non.
+        
+        LOGIQUE:
+        - Si la zone grise est EN DESSOUS du marqueur blanc → Cliquer (pour la faire monter)
+        - Si la zone grise est AU-DESSUS ou alignée → Ne pas cliquer (elle redescend naturellement)
+        
+        On ajoute un offset d'anticipation pour réagir plus vite.
+        """
+        if gray_y is None or white_y is None:
             return False
         
-        # Si la barre grise est en dessous de la blanche, on clique
-        # Offset de 20 pixels pour anticiper
-        return gray_pos > (white_pos - 20)
-    
-    def calibrate(self):
-        """Aide à calibrer la zone de capture"""
-        print("=== CALIBRATION ===")
-        print("Positionne-toi devant le mini-jeu de pêche")
-        print("\nValeurs actuelles:")
-        print(f"Top: {self.capture_region['top']}")
-        print(f"Left: {self.capture_region['left']}")
-        print(f"Width: {self.capture_region['width']}")
-        print(f"Height: {self.capture_region['height']}")
-        print("\nUtilise ce script pour trouver les bonnes coordonnées:")
-        print("--------------------")
-        print("import pyautogui")
-        print("import time")
-        print("try:")
-        print("    while True:")
-        print("        x, y = pyautogui.position()")
-        print("        print(f'X: {x} Y: {y}', end='\\r')")
-        print("        time.sleep(0.1)")
-        print("except KeyboardInterrupt:")
-        print("    pass")
-        print("--------------------")
-        print("\nNote les coordonnées coin haut-gauche et bas-droite de la zone de pêche")
+        # Si gris EN DESSOUS du blanc (plus grand Y) → cliquer pour monter
+        return gray_y > (white_y - self.offset_anticipation)
     
     def run(self, debug=True):
-        """Lance le bot"""
-        print("=== BOT DE PÊCHE GPO ===")
-        print("Appuie sur 'q' pour arrêter")
-        print("Démarrage dans 3 secondes...")
+        """Lance le bot avec affichage debug optionnel"""
+        print("=" * 50)
+        print("GPO AUTO FISHING BOT V2")
+        print("=" * 50)
+        print("\nZones calibrées:")
+        print(f"  Barre bleue: {self.blue_bar}")
+        print(f"  Barre verte: {self.green_bar}")
+        print("\nCommandes:")
+        print("  'q' = Arrêter le bot")
+        print("\nDémarrage dans 3 secondes...")
+        print("Place-toi devant le mini-jeu de pêche!\n")
+        
         time.sleep(3)
         
         self.running = True
         fps_counter = 0
-        start_time = time.time()
+        fps_start = time.time()
         
-        # Créer la fenêtre AVANT la boucle pour éviter l'effet miroir
+        # Créer la fenêtre debug si activé
         if debug:
-            cv2.namedWindow("GPO Fishing Bot", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("GPO Fishing Bot", 600, 600)
-            time.sleep(0.5)  # Laisser le temps à la fenêtre de s'initialiser
+            cv2.namedWindow("Bot Debug", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Bot Debug", 800, 500)
+            time.sleep(0.3)
         
         try:
             while self.running:
-                # Capture d'écran
-                screenshot = self.sct.grab(self.capture_region)
-                frame = np.array(screenshot)
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                # === CAPTURE ===
+                blue_frame = self.capture_blue_bar()
+                green_frame = self.capture_green_bar()
                 
-                # Détection des positions
-                white_pos = self.find_white_bar_position(frame)
-                gray_pos = self.find_gray_bar_position(frame)
-                green_level = self.check_green_bar(frame)
+                # === DÉTECTION ===
+                white_y = self.find_white_marker_y(blue_frame)
+                gray_y = self.find_gray_zone_y(blue_frame)
+                progress = self.get_green_bar_progress(green_frame)
                 
-                # Décision de cliquer
-                should_click = self.should_hold_click(gray_pos, white_pos)
+                # === DÉCISION ===
+                should_hold = self.should_click(gray_y, white_y)
                 
-                if should_click and not self.is_clicking:
+                # === ACTION ===
+                if should_hold and not self.is_clicking:
                     pyautogui.mouseDown()
                     self.is_clicking = True
-                elif not should_click and self.is_clicking:
+                elif not should_hold and self.is_clicking:
                     pyautogui.mouseUp()
                     self.is_clicking = False
                 
-                # Mode debug : affichage visuel
+                # === DEBUG VISUEL ===
                 if debug:
-                    debug_frame = frame.copy()
+                    # Créer une vue combinée
+                    debug_view = np.zeros((500, 800, 3), dtype=np.uint8)
                     
-                    # Dessiner les positions détectées
-                    if white_pos:
-                        cv2.line(debug_frame, (0, white_pos), 
-                                (debug_frame.shape[1], white_pos), (255, 255, 255), 2)
-                        cv2.putText(debug_frame, "Cible", (10, white_pos - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    # Agrandir la barre bleue pour mieux voir
+                    blue_scaled = cv2.resize(blue_frame, (200, 400))
+                    debug_view[50:450, 50:250] = blue_scaled
                     
-                    if gray_pos:
-                        cv2.line(debug_frame, (0, gray_pos), 
-                                (debug_frame.shape[1], gray_pos), (128, 128, 128), 2)
-                        cv2.putText(debug_frame, "Controle", (10, gray_pos + 20),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 2)
+                    # Agrandir la barre verte
+                    green_scaled = cv2.resize(green_frame, (100, 400))
+                    debug_view[50:450, 300:400] = green_scaled
+                    
+                    # Dessiner les détections sur la barre bleue agrandie
+                    if white_y is not None:
+                        # Scale la position Y
+                        white_y_scaled = int((white_y / self.blue_bar["height"]) * 400) + 50
+                        cv2.line(debug_view, (50, white_y_scaled), (250, white_y_scaled), 
+                                (255, 255, 255), 3)
+                        cv2.putText(debug_view, "CIBLE", (260, white_y_scaled), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    
+                    if gray_y is not None:
+                        gray_y_scaled = int((gray_y / self.blue_bar["height"]) * 400) + 50
+                        cv2.line(debug_view, (50, gray_y_scaled), (250, gray_y_scaled), 
+                                (128, 128, 128), 3)
+                        cv2.putText(debug_view, "CONTROLE", (260, gray_y_scaled), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
                     
                     # Afficher les infos
-                    cv2.putText(debug_frame, f"Vert: {green_level:.1f}%", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(debug_frame, f"Click: {self.is_clicking}", (10, 60),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    info_y = 50
+                    cv2.putText(debug_view, f"Progress: {progress:.1f}%", (450, info_y),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                     
-                    cv2.imshow("GPO Fishing Bot", debug_frame)
+                    info_y += 40
+                    click_color = (0, 255, 0) if self.is_clicking else (0, 0, 255)
+                    cv2.putText(debug_view, f"Clicking: {self.is_clicking}", (450, info_y),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, click_color, 2)
+                    
+                    info_y += 40
+                    if white_y and gray_y:
+                        distance = gray_y - white_y
+                        cv2.putText(debug_view, f"Distance: {distance}px", (450, info_y),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                    
+                    info_y += 60
+                    cv2.putText(debug_view, "BARRE BLEUE", (100, 470),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    cv2.putText(debug_view, "BARRE VERTE", (310, 470),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    
+                    cv2.imshow("Bot Debug", debug_view)
                 
-                # FPS counter
+                # === FPS COUNTER ===
                 fps_counter += 1
-                if time.time() - start_time >= 1.0:
-                    print(f"FPS: {fps_counter} | Vert: {green_level:.1f}% | Click: {self.is_clicking}")
+                if time.time() - fps_start >= 1.0:
+                    print(f"FPS: {fps_counter:2d} | Progress: {progress:5.1f}% | " +
+                          f"Click: {'YES' if self.is_clicking else 'NO '} | " +
+                          f"White: {white_y or 'N/A':>4} | Gray: {gray_y or 'N/A':>4}")
                     fps_counter = 0
-                    start_time = time.time()
+                    fps_start = time.time()
                 
-                # Check for quit
+                # === CHECK COMPLETION ===
+                if progress >= 95.0:
+                    print("\n🎣 POISSON ATTRAPÉ! 🎣")
+                    print("Attente de 3 secondes avant de continuer...\n")
+                    if self.is_clicking:
+                        pyautogui.mouseUp()
+                        self.is_clicking = False
+                    time.sleep(3)
+                
+                # === CHECK QUIT ===
                 if debug and cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-                
-                # Vérifier si on a fini (100%)
-                if green_level > 95:
-                    print("Poisson attrapé ! 🎣")
-                    time.sleep(2)  # Attendre avant de recommencer
         
         except KeyboardInterrupt:
-            print("\nArrêt du bot...")
+            print("\n\n⚠️  Arrêt demandé par l'utilisateur")
         
         finally:
+            # Cleanup
             if self.is_clicking:
                 pyautogui.mouseUp()
-            cv2.destroyAllWindows()
+            if debug:
+                cv2.destroyAllWindows()
+            print("\n✅ Bot arrêté proprement")
 
-# Utilisation
+# === POINT D'ENTRÉE ===
 if __name__ == "__main__":
-    bot = GPOFishingBot()
+    bot = GPOFishingBotV2()
     
-    # Étape 1: Calibrer la zone (optionnel mais recommandé)
-    print("Veux-tu calibrer la zone de capture ? (o/n)")
-    if input().lower() == 'o':
-        bot.calibrate()
+    print("\n" + "="*50)
+    print("LANCEMENT DU BOT")
+    print("="*50)
     
-    # Étape 2: Lancer le bot
+    # Lancer avec debug activé (fenêtre visuelle)
     bot.run(debug=True)
