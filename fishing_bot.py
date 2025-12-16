@@ -27,7 +27,7 @@ class GPOFishingBotV4:
         
         # Paramètres de détection
         self.target_offset = 20  # 🎯 Zone grise doit être 20px AU-DESSUS du marqueur blanc
-        self.tolerance = 5       # Tolérance en pixels (zone "OK")
+        self.tolerance = 3       # Tolérance (reduit) en pixels (zone "OK")
         self.calibrated = False
         
         # Système de clics avec contrôle proportionnel
@@ -35,9 +35,11 @@ class GPOFishingBotV4:
         self.last_action_time = 0
         self.click_interval = 0.1  # Intervalle entre les micro-clics (100ms = 10 CPS)
         
-        # Auto-restart quand la barre disparait
+        # Variables pour gestion poisson attrape
         self.bar_lost_time = None
         self.click_sent_for_restart = False
+        self.just_caught_fish = False
+        self.fish_caught_time = None
         
     def auto_calibrate(self):
         """
@@ -54,7 +56,7 @@ class GPOFishingBotV4:
         cv2.moveWindow("Calibration", 50, 50)
         
         attempts = 0
-        max_attempts = 100  # 100 frames max pour détecter
+        max_attempts = 200  # 200 frames max pour détecter
         
         while attempts < max_attempts:
             attempts += 1
@@ -270,11 +272,11 @@ class GPOFishingBotV4:
             # LOIN : Monter activement (clics rapides à 80%)
             return True, "fast", 80  # 80% duty cycle
         
-        elif distance > 5:
+        elif distance > 3:
             # PROCHE : MAINTENIR la position (clics à 50% = hover mode)
             return True, "hover", 50  # 50% duty cycle = ne bouge pas
         
-        elif distance > -5:
+        elif distance > -3:
             # ZONE PARFAITE : Micro-ajustements pour stabiliser (30%)
             return True, "stable", 30  # 30% duty cycle = descend très légèrement
         
@@ -373,13 +375,22 @@ class GPOFishingBotV4:
                 gray_y = self.find_gray_zone_y(blue_frame)
                 progress = self.get_green_bar_progress(green_frame)
                 
-                # Recalibration SEULEMENT si detection echoue
+                # Recalibration si detection echoue
                 if white_y is None or gray_y is None:
                     current_time = time.time()
+                    
+                    # Attendre 5s apres poisson
+                    if self.just_caught_fish:
+                        if self.fish_caught_time and (current_time - self.fish_caught_time) < 5:
+                            print("⏳ Attente du prochain poisson...")
+                            time.sleep(0.5)
+                            continue
+                        else:
+                            self.just_caught_fish = False
+                    
                     print("\n⚠️  Detection echouee ! Recherche...")
                     
                     if self.check_and_recalibrate():
-                        # Barre retrouvee
                         blue_frame = self.capture_blue_bar()
                         green_frame = self.capture_green_bar()
                         white_y = self.find_white_marker_y(blue_frame)
@@ -387,7 +398,6 @@ class GPOFishingBotV4:
                         progress = self.get_green_bar_progress(green_frame)
                         print("✅ Barre retrouvee !")
                     else:
-                        # Barre perdue
                         if self.bar_lost_time is None:
                             self.bar_lost_time = current_time
                             print("⚠️  Barre perdue ! Relance...")
@@ -404,7 +414,7 @@ class GPOFishingBotV4:
                             time.sleep(0.5)
                             continue
                         else:
-                            print("⚠️  Timeout 15s. Reset et nouvelle tentative...")
+                            print("⚠️  Timeout 15s. Reset...")
                             self.bar_lost_time = None
                             self.click_sent_for_restart = False
                             time.sleep(1)
@@ -542,11 +552,12 @@ class GPOFishingBotV4:
                 # Check completion
                 if progress >= 95.0:
                     print("\n🎣 POISSON ATTRAPÉ! 🎣")
-                    print("Attente de 3 secondes avant de continuer...\n")
+                    print("Attente que la barre disparaisse...\n")
                     if self.is_clicking:
                         pyautogui.mouseUp()
-                        self.is_clicking = False
-                    time.sleep(3)
+                    self.just_caught_fish = True
+                    self.fish_caught_time = time.time()
+                    time.sleep(2)
                 
                 # Check quit
                 if debug and cv2.waitKey(1) & 0xFF == ord('q'):
