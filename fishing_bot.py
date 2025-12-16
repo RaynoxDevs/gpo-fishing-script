@@ -162,12 +162,10 @@ class GPOFishingBot:
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     
     def find_white_marker_y(self, blue_frame):
-        hsv = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2HSV)
-        lower_white = np.array([0, 0, 180])
-        upper_white = np.array([180, 50, 255])
-        mask = cv2.inRange(hsv, lower_white, upper_white)
-        moments = cv2.moments(mask)
-        if moments["m00"] > 0:
+        gray = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+        moments = cv2.moments(thresh)
+        if moments["m00"] > 50:
             return int(moments["m01"] / moments["m00"])
         return None
     
@@ -488,11 +486,22 @@ class BotGUI:
         threading.Thread(target=do_calibration, daemon=True).start()
     
     def start_bot(self):
-        if not self.running and self.bot.calibrated:
+        if not self.bot.calibrated:
+            print("⚠️  Please calibrate first!")
+            return
+        
+        if self.running:
+            print("\n⏸️  Stopping bot...")
+            self.bot.running = False
+            self.running = False
+            self.status_label.config(text="Status: Stopped")
+            self.start_button.config(text="START (F6)")
+        else:
             print("\n▶️  Starting bot...")
             self.running = True
+            self.bot.running = True
             self.status_label.config(text="Status: Fishing...")
-            self.start_button.config(state='disabled', text="RUNNING...")
+            self.start_button.config(text="STOP (F6)")
             self.bot_thread = threading.Thread(target=self.run_bot_thread, daemon=True)
             self.bot_thread.start()
     
@@ -501,10 +510,14 @@ class BotGUI:
             self.bot.run(debug=True)
         except Exception as e:
             print(f"❌ Error: {e}")
-            self.status_label.config(text="Status: Error")
+            if self.status_label.winfo_exists():
+                self.status_label.config(text="Status: Error")
         finally:
             self.running = False
-            self.start_button.config(state='normal', text="START (F6)")
+            if self.start_button.winfo_exists():
+                self.start_button.config(text="START (F6)")
+            if self.status_label.winfo_exists() and self.status_label.cget("text") != "Status: Error":
+                self.status_label.config(text="Status: Stopped")
     
     def exit_app(self):
         print("\n👋 Closing...")
