@@ -277,7 +277,7 @@ class GPOFishingBot:
     
     def should_click_v4(self, gray_y, white_y):
         """
-        🚁 CONTRÔLE PROPORTIONNEL V4 - Système de duty cycle AMÉLIORÉ
+        🚁 CONTRÔLE PROPORTIONNEL V4 - Système de duty cycle OPTIMISÉ
         
         Retourne: (should_click, click_type, duty_cycle)
         - should_click: booléen
@@ -291,20 +291,21 @@ class GPOFishingBot:
         target_gray_y = white_y - self.target_offset
         distance = gray_y - target_gray_y
         
-        # CONTRÔLE PROPORTIONNEL AMÉLIORÉ - Évite les mouvements extrêmes
+        # CONTRÔLE OPTIMISÉ - Anticipation pour éviter de dépasser
         if distance > 60:
-            return True, "long", 90   # Très très loin : monter vite mais contrôlé (90% au lieu de 100%)
-        elif distance > 35:
-            return True, "fast", 70   # Loin : monter activement (70% au lieu de 80%)
-        elif distance > 15:
-            return True, "hover", 45  # Moyennement loin : hover mode contrôlé
-        elif distance > -15:
-            return True, "stable", 25 # ZONE STABLE ÉLARGIE : -15 à +15 px (zone morte)
-        elif distance > -35:
-            return False, None, 0     # Légèrement bas : laisser descendre naturellement
+            return True, "long", 90   # Très très loin : monter vite
+        elif distance > 40:
+            return True, "fast", 55   # Loin : monter contrôlé
+        elif distance > 25:
+            return True, "hover", 30  # Moyennement loin : ralentir progressivement
+        elif distance > 8:
+            return True, "stable", 18 # ✅ Approche finale : stabilisation anticipée (8-25px)
+        elif distance > -10:
+            return True, "stable", 20 # ✅ Zone cible : maintien stable (-10 à +8px)
         else:
-            return False, None, 0     # Trop bas : descendre
-    
+            # distance <= -10 : Trop haut, laisser descendre naturellement
+            return False, None, 0
+                
     
     def run(self, debug=False):
         self.sct = mss.mss()
@@ -319,12 +320,13 @@ class GPOFishingBot:
         
         print("\n🚁 Algorithm: V14 Optimized Control (No Prediction)")
         print("   - Gray zone maintained 40px ABOVE white marker")
-        print("   - Adaptive duty cycle with enhanced stability:")
-        print("     • 90%  = Rise fast (very far)")
-        print("     • 70%  = Rise actively (far)")
-        print("     • 45%  = HOVER (medium distance)")
-        print("     • 25%  = STABLE (±15px zone)")
-        print("     • 0%   = Descend naturally")
+        print("   - Adaptive duty cycle (anticipation mode):")
+        print("     • 90% = Rise fast (very far +60px)")
+        print("     • 55% = Rise controlled (far +40px)")
+        print("     • 30% = HOVER smooth (medium +25px)")
+        print("     • 18% = APPROACH (anticipate, +8 to +25px)")
+        print("     • 20% = STABLE (target zone: -10 to +8px)")
+        print("     • 0%  = Free fall (below -10px)")
         print("\nPress F6 to stop")
         print("Starting in 3 seconds...\n")
         time.sleep(3)
