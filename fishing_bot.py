@@ -7,15 +7,17 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import keyboard
+import json
+import os
 
 class ManualCalibrationWindow:
-    def __init__(self, on_complete_callback):
+    def __init__(self, on_complete_callback, last_x=None, last_y=None):
         self.on_complete = on_complete_callback
         self.dragging = False
         self.start_x = 0
         self.start_y = 0
-        self.rect_x = 100
-        self.rect_y = 100
+        self.rect_x = last_x if last_x is not None else 100
+        self.rect_y = last_y if last_y is not None else 100
         self.rect_width = 35
         self.rect_height = 350
         
@@ -113,9 +115,53 @@ class GPOFishingBot:
             self.sct = mss.mss()
         return self.sct
     
+    
+    def save_calibration(self):
+        if self.blue_bar:
+            data = {'x': self.blue_bar['left'], 'y': self.blue_bar['top']}
+            with open('calibration.json', 'w') as f:
+                json.dump(data, f)
+            print("💾 Calibration saved")
+    
+    def load_calibration(self):
+        if os.path.exists('calibration.json'):
+            try:
+                with open('calibration.json', 'r') as f:
+                    data = json.load(f)
+                self.blue_bar = {"top": data['y'], "left": data['x'], "width": self.blue_bar_width, "height": self.blue_bar_height}
+                self.green_bar = {"top": data['y'] + self.green_offset_y, "left": data['x'] + self.green_offset_x, "width": self.green_bar_width, "height": self.green_bar_height}
+                self.calibrated = True
+                print(f"✅ Calibration loaded: X={data['x']}, Y={data['y']}")
+                return True
+            except Exception as e:
+                print(f"⚠️  Failed to load: {e}")
+        return False
+    
     def manual_calibrate(self):
         print("\n🎯 Manual Calibration Mode")
-        print("Move the blue rectangle over the blue bar")
+        print("🔍 Applying zoom preset first...")
+        print("Please click on the game window now...")
+        time.sleep(2)
+        
+        print("1. Zooming in fully (20 scrolls)...")
+        for i in range(20):
+            pyautogui.scroll(100)
+            if i % 5 == 0:
+                print(f"   Scroll {i+1}/20...")
+            time.sleep(0.15)
+        
+        time.sleep(1)
+        print("2. Zooming out (9 scrolls)...")
+        for i in range(9):
+            pyautogui.scroll(-100)
+            print(f"   Scroll {i+1}/9...")
+            time.sleep(0.2)
+        
+        time.sleep(0.5)
+        print("✅ Zoom complete!")
+        time.sleep(0.5)
+        print("✅ Zoom preset applied!")
+        print("\nMove the blue rectangle over the blue bar")
         print("Press ENTER to confirm")
         
         result = {'x': None, 'y': None, 'w': None, 'h': None}
@@ -126,7 +172,9 @@ class GPOFishingBot:
             result['w'] = w
             result['h'] = h
         
-        cal_window = ManualCalibrationWindow(on_calibration_complete)
+        last_x = self.blue_bar['left'] if self.blue_bar else None
+        last_y = self.blue_bar['top'] if self.blue_bar else None
+        cal_window = ManualCalibrationWindow(on_calibration_complete, last_x, last_y)
         cal_window.show()
         
         if result['x'] is not None:
@@ -146,6 +194,7 @@ class GPOFishingBot:
             
             self.calibrated = True
             print(f"✅ Calibration complete: X={result['x']}, Y={result['y']}")
+            self.save_calibration()
             return True
         else:
             print("❌ Calibration cancelled")
@@ -268,6 +317,20 @@ class GPOFishingBot:
                 self.click_sent_for_restart = False
                 return True
         return False
+    
+    def apply_zoom_preset(self):
+        print("\n🔍 Applying zoom preset...")
+        print("1. Zooming in fully...")
+        for i in range(20):
+            pyautogui.scroll(10)
+            time.sleep(0.05)
+        time.sleep(0.5)
+        print("2. Zooming out 9 clicks...")
+        for i in range(9):
+            pyautogui.scroll(-1)
+            time.sleep(0.1)
+        time.sleep(0.3)
+        print("✅ Zoom preset applied!")
     
     def run(self, debug=True):
         print("\n" + "="*50)
@@ -435,7 +498,7 @@ class BotGUI:
         
         self.root = tk.Tk()
         self.root.title("GPO Fishing Bot")
-        self.root.geometry("300x250")
+        self.root.geometry("300x280")
         self.root.resizable(False, False)
         self.root.attributes('-topmost', True)
         
@@ -451,7 +514,7 @@ class BotGUI:
         self.status_label = ttk.Label(main_frame, text="Status: Stopped", font=('Arial', 10))
         self.status_label.pack(pady=10)
         
-        self.cal_button = ttk.Button(main_frame, text="CALIBRATION", command=self.calibrate, style='Big.TButton')
+        self.cal_button = ttk.Button(main_frame, text="CALIBRATION (F7)", command=self.calibrate, style='Big.TButton')
         self.cal_button.pack(pady=5, fill=tk.X)
         
         self.start_button = ttk.Button(main_frame, text="START (F6)", command=self.start_bot, style='Big.TButton', state='disabled')
@@ -460,15 +523,20 @@ class BotGUI:
         self.exit_button = ttk.Button(main_frame, text="EXIT (Q)", command=self.exit_app, style='Big.TButton')
         self.exit_button.pack(pady=5, fill=tk.X)
         
+        if self.bot.load_calibration():
+            self.status_label.config(text="Status: Calibrated")
+            self.start_button.config(state='normal')
+        
         self.root.bind('q', lambda e: self.exit_app())
         self.root.bind('Q', lambda e: self.exit_app())
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         
         try:
             keyboard.add_hotkey('f6', self.start_bot, suppress=False)
-            print("✅ Global hotkey F6 active")
+            keyboard.add_hotkey('f7', self.calibrate, suppress=False)
+            print("✅ Global hotkeys active: F6=Start/Stop, F7=Calibration")
         except:
-            print("⚠️  Global hotkey F6 unavailable")
+            print("⚠️  Global hotkeys unavailable")
     
     def calibrate(self):
         print("\n▶️  Starting calibration...")
@@ -498,6 +566,10 @@ class BotGUI:
             self.start_button.config(text="START (F6)")
         else:
             print("\n▶️  Starting bot...")
+
+            if self.zoom_var.get():
+                self.bot.apply_zoom_preset()
+
             self.running = True
             self.bot.running = True
             self.status_label.config(text="Status: Fishing...")
@@ -526,6 +598,7 @@ class BotGUI:
             pyautogui.mouseUp()
         try:
             keyboard.remove_hotkey('f6')
+            keyboard.remove_hotkey('f7')
         except:
             pass
         cv2.destroyAllWindows()
