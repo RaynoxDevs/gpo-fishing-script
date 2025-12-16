@@ -295,13 +295,13 @@ class GPOFishingBot:
         if distance > 150:
             return True, "long", 300   # Très très loin : monter vite
         elif distance > 100:
-            return True, "fast", 300   # Loin : monter contrôlé
+            return True, "fast", 250   # Loin : monter contrôlé
         elif distance > 80:
-            return True, "fast", 300   # Loin : monter contrôlé
+            return True, "fast", 290# Loin : monter contrôlé
         elif distance > 50:
-            return True, "hover", 80  # Moyennement loin : ralentir progressivement
+            return True, "hover", 140  # Moyennement loin : ralentir progressivement
         elif distance > 30:
-            return True, "stable", 80 # Approche finale : stabilisation anticipée
+            return True, "stable", 110 # Approche finale : stabilisation anticipée
         else:
             # distance <= 0 : TROP HAUT - Relâcher immédiatement !
             return False, None, 0
