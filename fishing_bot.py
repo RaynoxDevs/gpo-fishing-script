@@ -224,7 +224,7 @@ class GPOFishingBot:
     
     def find_white_marker_y(self, blue_frame):
         gray = cv2.cvtColor(blue_frame, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
         moments = cv2.moments(thresh)
         if moments["m00"] > 50:
             return int(moments["m01"] / moments["m00"])
