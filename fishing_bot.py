@@ -291,7 +291,7 @@ class GPOFishingBot:
         target_gray_y = white_y - self.target_offset
         distance = gray_y - target_gray_y
         
-        # CONTRÔLE OPTIMISÉ - Anticipation pour éviter de dépasser
+        # CONTRÔLE OPTIMISÉ - Correction immédiate si trop haut
         if distance > 60:
             return True, "long", 90   # Très très loin : monter vite
         elif distance > 40:
@@ -299,13 +299,13 @@ class GPOFishingBot:
         elif distance > 25:
             return True, "hover", 30  # Moyennement loin : ralentir progressivement
         elif distance > 8:
-            return True, "stable", 18 # ✅ Approche finale : stabilisation anticipée (8-25px)
-        elif distance > -10:
-            return True, "stable", 20 # ✅ Zone cible : maintien stable (-10 à +8px)
+            return True, "stable", 18 # Approche finale : stabilisation anticipée
+        elif distance > 0:
+            return True, "stable", 20 # ✅ Zone cible (0 à +8px) : maintien précis
         else:
-            # distance <= -10 : Trop haut, laisser descendre naturellement
+            # distance <= 0 : TROP HAUT - Relâcher immédiatement !
             return False, None, 0
-                
+                    
     
     def run(self, debug=False):
         self.sct = mss.mss()
@@ -320,13 +320,13 @@ class GPOFishingBot:
         
         print("\n🚁 Algorithm: V14 Optimized Control (No Prediction)")
         print("   - Gray zone maintained 40px ABOVE white marker")
-        print("   - Adaptive duty cycle (anticipation mode):")
+        print("   - Adaptive duty cycle (immediate correction):")
         print("     • 90% = Rise fast (very far +60px)")
         print("     • 55% = Rise controlled (far +40px)")
         print("     • 30% = HOVER smooth (medium +25px)")
         print("     • 18% = APPROACH (anticipate, +8 to +25px)")
-        print("     • 20% = STABLE (target zone: -10 to +8px)")
-        print("     • 0%  = Free fall (below -10px)")
+        print("     • 20% = STABLE (target zone: 0 to +8px)")
+        print("     • 0%  = RELEASE (below 0px - immediate correction!)")
         print("\nPress F6 to stop")
         print("Starting in 3 seconds...\n")
         time.sleep(3)
