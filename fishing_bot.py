@@ -16,8 +16,8 @@ class ManualCalibrationWindow:
         self.start_y = 0
         self.rect_x = 100
         self.rect_y = 100
-        self.rect_width = 27
-        self.rect_height = 423
+        self.rect_width = 35
+        self.rect_height = 350
         
         self.root = tk.Tk()
         self.root.title("Manual Calibration")
@@ -476,13 +476,16 @@ class BotGUI:
         print("\n▶️  Starting calibration...")
         self.status_label.config(text="Status: Calibrating...")
         self.cal_button.config(state='disabled')
-        self.root.update()
-        if self.bot.manual_calibrate():
-            self.status_label.config(text="Status: Calibrated")
-            self.start_button.config(state='normal')
-        else:
-            self.status_label.config(text="Status: Stopped")
-        self.cal_button.config(state='normal')
+        
+        def do_calibration():
+            if self.bot.manual_calibrate():
+                self.root.after(100, lambda: self.status_label.config(text="Status: Calibrated"))
+                self.root.after(100, lambda: self.start_button.config(state='normal'))
+            else:
+                self.root.after(100, lambda: self.status_label.config(text="Status: Stopped"))
+            self.root.after(100, lambda: self.cal_button.config(state='normal'))
+        
+        threading.Thread(target=do_calibration, daemon=True).start()
     
     def start_bot(self):
         if not self.running and self.bot.calibrated:
