@@ -87,8 +87,8 @@ class GPOFishingBot:
         self.is_clicking = False
         
         # Dimensions fixes
-        self.blue_bar_width = 27
-        self.blue_bar_height = 423
+        self.blue_bar_width = 40
+        self.blue_bar_height = 460
         self.green_offset_x = 64
         self.green_offset_y = 52
         self.green_bar_width = 22
