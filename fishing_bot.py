@@ -293,15 +293,15 @@ class GPOFishingBot:
         
         # CONTRÔLE OPTIMISÉ - Correction immédiate si trop haut
         if distance > 60:
-            return True, "long", 50   # Très très loin : monter vite
+            return True, "long", 40   # Très très loin : monter vite
         elif distance > 40:
-            return True, "fast", 50   # Loin : monter contrôlé
+            return True, "fast", 30   # Loin : monter contrôlé
         elif distance > 30:
             return True, "hover", 20  # Moyennement loin : ralentir progressivement
         elif distance > 15:
-            return True, "stable", 10 # Approche finale : stabilisation anticipée
+            return True, "stable", 15 # Approche finale : stabilisation anticipée
         elif distance > 0:
-            return True, "stable", 10 # ✅ Zone cible (0 à +8px) : maintien précis
+            return True, "stable", 15 # ✅ Zone cible (0 à +8px) : maintien précis
         else:
             # distance <= 0 : TROP HAUT - Relâcher immédiatement !
             return False, None, 0
