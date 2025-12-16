@@ -302,6 +302,8 @@ class GPOFishingBot:
             return True, "hover", 50  # Moyennement loin : ralentir progressivement
         elif distance > 30:
             return True, "stable", 50 # Approche finale : stabilisation anticipée
+        elif distance > 15:
+            return True, "stable", 30 # Approche finale : stabilisation anticipée
         elif distance > 0:
             return True, "stable", 15 # ✅ Zone cible (0 à +8px) : maintien précis
         else:
