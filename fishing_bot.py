@@ -139,10 +139,12 @@ class GPOFishingBot:
         return False
     
     def manual_calibrate(self):
+        # Force recreation of MSS in current thread
+        self.sct = mss.mss()
+        
         print("\n🎯 Manual Calibration Mode")
         print("🔍 Applying zoom preset...")
-        print("Please focus on game window (2 seconds)...")
-        time.sleep(2)
+        time.sleep(0.5)
         
         MOUSEEVENTF_WHEEL = 0x0800
         
@@ -202,12 +204,16 @@ class GPOFishingBot:
             return False
     
     def capture_blue_bar(self):
-        screenshot = self.get_sct().grab(self.blue_bar)
+        if self.sct is None:
+            self.sct = mss.mss()
+        screenshot = self.sct.grab(self.blue_bar)
         frame = np.array(screenshot)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     
     def capture_green_bar(self):
-        screenshot = self.get_sct().grab(self.green_bar)
+        if self.sct is None:
+            self.sct = mss.mss()
+        screenshot = self.sct.grab(self.green_bar)
         frame = np.array(screenshot)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     
@@ -287,7 +293,8 @@ class GPOFishingBot:
             return False, 0
     
     def check_and_recalibrate(self):
-        sct = self.get_sct()
+        # Always use fresh MSS instance
+        sct = mss.mss()
         monitor = sct.monitors[1]
         screenshot = sct.grab(monitor)
         frame = np.array(screenshot)
@@ -334,6 +341,9 @@ class GPOFishingBot:
         print("✅ Zoom preset applied!")
     
     def run(self, debug=True):
+        # Force recreation of MSS in current thread (F6 hotkey thread)
+        self.sct = mss.mss()
+        
         print("\n" + "="*50)
         print("STARTING BOT")
         print("="*50)
@@ -567,10 +577,7 @@ class BotGUI:
             self.start_button.config(text="START (F6)")
         else:
             print("\n▶️  Starting bot...")
-
-            if self.zoom_var.get():
-                self.bot.apply_zoom_preset()
-
+            
             self.running = True
             self.bot.running = True
             self.status_label.config(text="Status: Fishing...")
