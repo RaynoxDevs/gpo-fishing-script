@@ -97,8 +97,8 @@ class GPOFishingBot:
         self.green_bar = None
         self.calibrated = False
         
-        self.target_offset = 20
-        self.tolerance = 3
+        self.target_offset = 18  # Closer to target for better coverage
+        self.tolerance = 2  # Tighter tolerance for better accuracy
         
         self.last_action_time = 0
         self.last_white_y = None
@@ -258,72 +258,54 @@ class GPOFishingBot:
             self.white_y_velocity = 0
             return False, 0
         
+        # Track velocity for prediction
         if self.last_white_y is not None:
             self.white_y_velocity = white_y - self.last_white_y
         self.last_white_y = white_y
         
+        # Target: gray zone 20px above white marker
         target_gray_y = white_y - self.target_offset
-        predicted_white_y = white_y + (self.white_y_velocity * self.prediction_frames)
+        
+        # Predict future position (improved prediction)
+        predicted_white_y = white_y + (self.white_y_velocity * 4)  # 4 frames ahead
         predicted_target_y = predicted_white_y - self.target_offset
         
+        # Weighted average: 70% current, 30% predicted
         current_distance = gray_y - target_gray_y
         predicted_distance = gray_y - predicted_target_y
-        distance = (current_distance + predicted_distance) / 2.0
+        distance = (current_distance * 0.7) + (predicted_distance * 0.3)
         
-        if distance > 50:
-            self.last_click_duration = 300
-            return True, 300
-        elif distance > 30:
-            self.last_click_duration = 200
-            return True, 200
-        elif distance > 15:
-            self.last_click_duration = 120
-            return True, 120
-        elif distance > 8:
-            self.last_click_duration = 80
-            return True, 80
-        elif distance > 3:
-            self.last_click_duration = 50
-            return True, 50
-        elif distance > -3:
-            self.last_click_duration = 30
-            return True, 30
+        # IMPROVED CLICK DURATIONS - More aggressive and responsive
+        if distance > 40:
+            self.last_click_duration = 250
+            return True, 250
+        elif distance > 20:
+            self.last_click_duration = 150
+            return True, 150
+        elif distance > 10:
+            self.last_click_duration = 90
+            return True, 90
+        elif distance > 5:
+            self.last_click_duration = 60
+            return True, 60
+        elif distance > 2:
+            self.last_click_duration = 40
+            return True, 40
+        elif distance > -2:
+            # Perfect zone: very light taps
+            self.last_click_duration = 25
+            return True, 25
+        elif distance > -10:
+            # Slightly too high: no click, let it fall
+            self.last_click_duration = 0
+            return False, 0
         else:
+            # Way too high: no click
             self.last_click_duration = 0
             return False, 0
     
     def check_and_recalibrate(self):
-        # Always use fresh MSS instance
-        sct = mss.mss()
-        monitor = sct.monitors[1]
-        screenshot = sct.grab(monitor)
-        frame = np.array(screenshot)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-        
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower_blue = np.array([90, 80, 120])
-        upper_blue = np.array([130, 255, 255])
-        mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
-        
-        kernel = np.ones((5, 5), np.uint8)
-        mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_CLOSE, kernel)
-        mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_OPEN, kernel)
-        
-        contours, _ = cv2.findContours(mask_blue, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            if h > 150 and w > 10 and h > w * 5:
-                if self.blue_bar:
-                    old_x = self.blue_bar['left']
-                    old_y = self.blue_bar['top']
-                    if abs(x - old_x) > 3 or abs(y - old_y) > 3:
-                        print(f"🔄 Bar moved: ({old_x},{old_y}) -> ({x},{y})")
-                        self.blue_bar = {"top": y, "left": x, "width": self.blue_bar_width, "height": self.blue_bar_height}
-                        self.green_bar = {"top": y + self.green_offset_y, "left": x + self.green_offset_x, "width": self.green_bar_width, "height": self.green_bar_height}
-                self.bar_lost_time = None
-                self.click_sent_for_restart = False
-                return True
+        # Disabled: User calibration is perfect, no need to search
         return False
     
     def apply_zoom_preset(self):
@@ -377,42 +359,18 @@ class GPOFishingBot:
                 
                 if white_y is None or gray_y is None:
                     current_time = time.time()
+                    
+                    # Just wait for fish after catch
                     if self.just_caught_fish:
                         if self.fish_caught_time and (current_time - self.fish_caught_time) < 5:
-                            print("⏳ Waiting for next fish...")
                             time.sleep(0.5)
                             continue
                         else:
                             self.just_caught_fish = False
                     
-                    print("\n⚠️  Detection failed! Searching...")
-                    if self.check_and_recalibrate():
-                        blue_frame = self.capture_blue_bar()
-                        green_frame = self.capture_green_bar()
-                        white_y = self.find_white_marker_y(blue_frame)
-                        gray_y = self.find_gray_zone_y(blue_frame)
-                        progress = self.get_green_bar_progress(green_frame)
-                        print("✅ Bar found!")
-                    else:
-                        if self.bar_lost_time is None:
-                            self.bar_lost_time = current_time
-                            print("⚠️  Bar lost! Attempting restart...")
-                        if not self.click_sent_for_restart:
-                            pyautogui.click()
-                            print("🖱️  Click sent")
-                            self.click_sent_for_restart = True
-                            time.sleep(0.5)
-                        elapsed = current_time - self.bar_lost_time
-                        if elapsed < 15:
-                            print(f"⏳ Waiting... ({elapsed:.1f}s/15s)")
-                            time.sleep(0.5)
-                            continue
-                        else:
-                            print("⚠️  15s timeout. Resetting...")
-                            self.bar_lost_time = None
-                            self.click_sent_for_restart = False
-                            time.sleep(1)
-                            continue
+                    # Detection failed but calibration is fixed, just wait
+                    time.sleep(0.1)
+                    continue
                 
                 should_click, click_duration_ms = self.should_click(gray_y, white_y)
                 current_time = time.time()
