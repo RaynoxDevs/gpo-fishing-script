@@ -117,6 +117,8 @@ class GPOFishingBot:
         self.click_sent_for_restart = False
         self.just_caught_fish = False
         self.fish_caught_time = None
+        self.fish_count = 0
+        self.first_cast = True  # Pour ne pas compter le premier lancer
     
     def get_sct(self):
         if self.sct is None:
@@ -364,6 +366,14 @@ class GPOFishingBot:
                     # Wait 1 second before clicking to cast rod
                     elapsed = current_time - self.bar_lost_time
                     if not self.click_sent_for_restart and elapsed >= 1.0:
+                        # Incrémenter le compteur SEULEMENT si ce n'est pas le premier lancer
+                        if not self.first_cast:
+                            self.fish_count += 1
+                            print(f"\n🎣 FISH CAUGHT! Total: {self.fish_count} 🎣")
+                        else:
+                            self.first_cast = False
+                            print("\n🎣 First cast - starting fishing...")
+                        
                         pyautogui.click()
                         print("🖱️  Click sent to cast rod")
                         self.click_sent_for_restart = True
@@ -471,17 +481,6 @@ class GPOFishingBot:
                     fps_counter = 0
                     fps_start = time.time()
                 
-                if progress >= 95.0:
-                    self.fish_count += 1
-                    print(f"\n🎣 FISH CAUGHT! Total: {self.fish_count} 🎣")
-                    print("Waiting for bar to disappear...\n")
-                    if self.is_clicking:
-                        pyautogui.mouseUp()
-                        self.is_clicking = False
-                    self.just_caught_fish = True
-                    self.fish_caught_time = time.time()
-                    time.sleep(2)
-                
                 if debug and cv2.waitKey(1) & 0xFF == ord('q'):
                     break
         
@@ -546,6 +545,9 @@ class BotGUI:
             print("✅ Global hotkeys active: F6=Start/Stop, F7=Calibration")
         except:
             print("⚠️ Global hotkeys unavailable")
+        
+        # Démarre la mise à jour automatique du compteur de poissons
+        self.update_fish_count()
     
     def calibrate(self):
         print("\n▶️ Starting calibration...")
