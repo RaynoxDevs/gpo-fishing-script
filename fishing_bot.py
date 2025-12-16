@@ -97,8 +97,8 @@ class GPOFishingBot:
         self.green_bar = None
         self.calibrated = False
         
-        self.target_offset = 18  # Closer to target for better coverage
-        self.tolerance = 2  # Tighter tolerance for better accuracy
+        self.target_offset = 18
+        self.tolerance = 2
         
         self.last_action_time = 0
         self.last_white_y = None
@@ -139,7 +139,6 @@ class GPOFishingBot:
         return False
     
     def manual_calibrate(self):
-        # Force recreation of MSS in current thread
         self.sct = mss.mss()
         
         print("\n🎯 Manual Calibration Mode")
@@ -258,24 +257,19 @@ class GPOFishingBot:
             self.white_y_velocity = 0
             return False, 0
         
-        # Track velocity for prediction
         if self.last_white_y is not None:
             self.white_y_velocity = white_y - self.last_white_y
         self.last_white_y = white_y
         
-        # Target: gray zone 20px above white marker
         target_gray_y = white_y - self.target_offset
         
-        # Predict future position (improved prediction)
-        predicted_white_y = white_y + (self.white_y_velocity * 4)  # 4 frames ahead
+        predicted_white_y = white_y + (self.white_y_velocity * 4)
         predicted_target_y = predicted_white_y - self.target_offset
         
-        # Weighted average: 70% current, 30% predicted
         current_distance = gray_y - target_gray_y
         predicted_distance = gray_y - predicted_target_y
         distance = (current_distance * 0.7) + (predicted_distance * 0.3)
         
-        # IMPROVED CLICK DURATIONS - More aggressive and responsive
         if distance > 40:
             self.last_click_duration = 250
             return True, 250
@@ -292,20 +286,16 @@ class GPOFishingBot:
             self.last_click_duration = 40
             return True, 40
         elif distance > -2:
-            # Perfect zone: very light taps
             self.last_click_duration = 25
             return True, 25
         elif distance > -10:
-            # Slightly too high: no click, let it fall
             self.last_click_duration = 0
             return False, 0
         else:
-            # Way too high: no click
             self.last_click_duration = 0
             return False, 0
     
     def check_and_recalibrate(self):
-        # Disabled: User calibration is perfect, no need to search
         return False
     
     def apply_zoom_preset(self):
@@ -323,7 +313,6 @@ class GPOFishingBot:
         print("✅ Zoom preset applied!")
     
     def run(self, debug=True):
-        # Force recreation of MSS in current thread (F6 hotkey thread)
         self.sct = mss.mss()
         
         print("\n" + "="*50)
@@ -360,7 +349,6 @@ class GPOFishingBot:
                 if white_y is None or gray_y is None:
                     current_time = time.time()
                     
-                    # Just wait for fish after catch
                     if self.just_caught_fish:
                         if self.fish_caught_time and (current_time - self.fish_caught_time) < 5:
                             time.sleep(0.5)
@@ -368,7 +356,6 @@ class GPOFishingBot:
                         else:
                             self.just_caught_fish = False
                     
-                    # Detection failed but calibration is fixed, just wait
                     time.sleep(0.1)
                     continue
                 
@@ -483,10 +470,11 @@ class BotGUI:
         self.status_label = ttk.Label(main_frame, text="Status: Stopped", font=('Arial', 10))
         self.status_label.pack(pady=10)
         
-        self.cal_button = ttk.Button(main_frame, text="CALIBRATION (F7)", command=self.calibrate, style='Big.TButton')
+        # Boutons désactivés pour le clic
+        self.cal_button = ttk.Button(main_frame, text="CALIBRATION (F7)", style='Big.TButton', state='disabled')
         self.cal_button.pack(pady=5, fill=tk.X)
         
-        self.start_button = ttk.Button(main_frame, text="START (F6)", command=self.start_bot, style='Big.TButton', state='disabled')
+        self.start_button = ttk.Button(main_frame, text="START (F6)", style='Big.TButton', state='disabled')
         self.start_button.pack(pady=5, fill=tk.X)
         
         self.exit_button = ttk.Button(main_frame, text="EXIT (Q)", command=self.exit_app, style='Big.TButton')
@@ -494,7 +482,6 @@ class BotGUI:
         
         if self.bot.load_calibration():
             self.status_label.config(text="Status: Calibrated")
-            self.start_button.config(state='normal')
         
         self.root.bind('q', lambda e: self.exit_app())
         self.root.bind('Q', lambda e: self.exit_app())
@@ -510,15 +497,12 @@ class BotGUI:
     def calibrate(self):
         print("\n▶️  Starting calibration...")
         self.status_label.config(text="Status: Calibrating...")
-        self.cal_button.config(state='disabled')
         
         def do_calibration():
             if self.bot.manual_calibrate():
                 self.root.after(100, lambda: self.status_label.config(text="Status: Calibrated"))
-                self.root.after(100, lambda: self.start_button.config(state='normal'))
             else:
                 self.root.after(100, lambda: self.status_label.config(text="Status: Stopped"))
-            self.root.after(100, lambda: self.cal_button.config(state='normal'))
         
         threading.Thread(target=do_calibration, daemon=True).start()
     
