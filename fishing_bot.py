@@ -35,6 +35,10 @@ class GPOFishingBotV4:
         self.last_action_time = 0
         self.click_interval = 0.1  # Intervalle entre les micro-clics (100ms = 10 CPS)
         
+        # Auto-restart quand la barre disparait
+        self.bar_lost_time = None
+        self.click_sent_for_restart = False
+        
     def auto_calibrate(self):
         """
         Détecte automatiquement la position de la barre bleue,
@@ -279,6 +283,46 @@ class GPOFishingBotV4:
             return False, None, 0  # 0% duty cycle
     
     
+    def check_and_recalibrate(self):
+        """Cherche la barre bleue et met a jour si trouvee"""
+        monitor = self.sct.monitors[1]
+        screenshot = self.sct.grab(monitor)
+        frame = np.array(screenshot)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        
+        blue_region = self.find_blue_bar(frame)
+        
+        if blue_region:
+            new_x = blue_region['x']
+            new_y = blue_region['y']
+            
+            if self.blue_bar:
+                old_x = self.blue_bar['left']
+                old_y = self.blue_bar['top']
+                
+                if abs(new_x - old_x) > 3 or abs(new_y - old_y) > 3:
+                    print(f"\n🔄 Barre deplacee: ({old_x},{old_y}) -> ({new_x},{new_y})")
+                    
+                    self.blue_bar = {
+                        "top": new_y,
+                        "left": new_x,
+                        "width": self.blue_bar_width,
+                        "height": self.blue_bar_height
+                    }
+                    
+                    self.green_bar = {
+                        "top": new_y + self.green_offset_y,
+                        "left": new_x + self.green_offset_x,
+                        "width": self.green_bar_width,
+                        "height": self.green_bar_height
+                    }
+            
+            self.bar_lost_time = None
+            self.click_sent_for_restart = False
+            return True
+        
+        return False
+    
     def run(self, debug=True):
         """Lance le bot avec calibration automatique"""
         print("=" * 50)
@@ -328,6 +372,43 @@ class GPOFishingBotV4:
                 white_y = self.find_white_marker_y(blue_frame)
                 gray_y = self.find_gray_zone_y(blue_frame)
                 progress = self.get_green_bar_progress(green_frame)
+                
+                # Recalibration SEULEMENT si detection echoue
+                if white_y is None or gray_y is None:
+                    current_time = time.time()
+                    print("\n⚠️  Detection echouee ! Recherche...")
+                    
+                    if self.check_and_recalibrate():
+                        # Barre retrouvee
+                        blue_frame = self.capture_blue_bar()
+                        green_frame = self.capture_green_bar()
+                        white_y = self.find_white_marker_y(blue_frame)
+                        gray_y = self.find_gray_zone_y(blue_frame)
+                        progress = self.get_green_bar_progress(green_frame)
+                        print("✅ Barre retrouvee !")
+                    else:
+                        # Barre perdue
+                        if self.bar_lost_time is None:
+                            self.bar_lost_time = current_time
+                            print("⚠️  Barre perdue ! Relance...")
+                        
+                        if not self.click_sent_for_restart:
+                            pyautogui.click()
+                            print("🖱️  Clic envoye")
+                            self.click_sent_for_restart = True
+                            time.sleep(0.5)
+                        
+                        elapsed = current_time - self.bar_lost_time
+                        if elapsed < 15:
+                            print(f"⏳ Attente... ({elapsed:.1f}s/15s)")
+                            time.sleep(0.5)
+                            continue
+                        else:
+                            print("⚠️  Timeout 15s. Reset et nouvelle tentative...")
+                            self.bar_lost_time = None
+                            self.click_sent_for_restart = False
+                            time.sleep(1)
+                            continue
                 
                 # Décision avec contrôle proportionnel (duty cycle)
                 should_hold, click_type, duty_cycle = self.should_click(gray_y, white_y)
