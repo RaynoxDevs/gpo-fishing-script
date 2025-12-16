@@ -19,8 +19,8 @@ class ManualCalibrationWindow:
         self.start_y = 0
         self.rect_x = last_x if last_x is not None else 100
         self.rect_y = last_y if last_y is not None else 100
-        self.rect_width = 35
-        self.rect_height = 350
+        self.rect_width = 40
+        self.rect_height = 400
         
         self.root = tk.Tk()
         self.root.title("Manual Calibration")
@@ -88,7 +88,7 @@ class GPOFishingBot:
         
         # Dimensions fixes
         self.blue_bar_width = 40
-        self.blue_bar_height = 460
+        self.blue_bar_height = 400
         self.green_offset_x = 64
         self.green_offset_y = 52
         self.green_bar_width = 22
