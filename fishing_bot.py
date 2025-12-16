@@ -99,14 +99,9 @@ class GPOFishingBot:
         self.calibrated = False
         
         # === PARAMÈTRES V4 - CONTRÔLE PROPORTIONNEL ===
-        self.target_offset = 40  # Zone grise doit être 20px AU-DESSUS du marqueur blanc
+        self.target_offset = 40  # Zone grise doit être 40px AU-DESSUS du marqueur blanc
         self.tolerance = 5       # Tolérance en pixels
         self.click_interval = 0.1  # Intervalle entre micro-clics (10 CPS max)
-        
-        # Système de prédiction (V11)
-        self.last_white_y = None
-        self.white_y_velocity = 0
-        self.prediction_weight = 0.3  # 30% prédiction, 70% position actuelle
         
         # Timers
         self.last_action_time = 0
@@ -144,6 +139,27 @@ class GPOFishingBot:
                 return True
             except Exception as e:
                 print(f"⚠️ Failed to load: {e}")
+        return False
+    
+    def save_fish_count(self):
+        """Sauvegarde le nombre de poissons capturés"""
+        try:
+            with open('fish_count.json', 'w') as f:
+                json.dump({'count': self.fish_count}, f)
+        except Exception as e:
+            print(f"⚠️ Failed to save fish count: {e}")
+    
+    def load_fish_count(self):
+        """Charge le nombre de poissons capturés depuis la dernière session"""
+        if os.path.exists('fish_count.json'):
+            try:
+                with open('fish_count.json', 'r') as f:
+                    data = json.load(f)
+                    self.fish_count = data.get('count', 0)
+                    print(f"✅ Fish count loaded: {self.fish_count}")
+                    return True
+            except Exception as e:
+                print(f"⚠️ Failed to load fish count: {e}")
         return False
     
     def manual_calibrate(self):
@@ -261,7 +277,7 @@ class GPOFishingBot:
     
     def should_click_v4(self, gray_y, white_y):
         """
-        🚁 CONTRÔLE PROPORTIONNEL V4 - Système de duty cycle
+        🚁 CONTRÔLE PROPORTIONNEL V4 - Système de duty cycle AMÉLIORÉ
         
         Retourne: (should_click, click_type, duty_cycle)
         - should_click: booléen
@@ -269,69 +285,53 @@ class GPOFishingBot:
         - duty_cycle: 0-100 (% du temps où on clique)
         """
         if gray_y is None or white_y is None:
-            self.last_white_y = None
-            self.white_y_velocity = 0
             return False, None, 0
         
-        # Calcul de la vélocité (prédiction)
-        if self.last_white_y is not None:
-            self.white_y_velocity = white_y - self.last_white_y
-        self.last_white_y = white_y
-        
-        # Position cible avec prédiction
-        predicted_white_y = white_y + (self.white_y_velocity * 4)
+        # Position cible : zone grise doit être 40px AU-DESSUS du marqueur blanc
         target_gray_y = white_y - self.target_offset
-        predicted_target_y = predicted_white_y - self.target_offset
+        distance = gray_y - target_gray_y
         
-        # Distance hybride (70% actuel, 30% prédiction)
-        current_distance = gray_y - target_gray_y
-        predicted_distance = gray_y - predicted_target_y
-        distance = (current_distance * 0.7) + (predicted_distance * 0.3)
-        
-        # CONTRÔLE PROPORTIONNEL basé sur la distance
-        if distance > 50:
-            return True, "long", 100  # Monter vite (clic maintenu)
-        elif distance > 20:
-            return True, "fast", 80   # Monter activement
-        elif distance > 5:
-            return True, "hover", 50  # MAINTENIR position (hover mode)
-        elif distance > -5:
-            return True, "stable", 30 # Stabiliser
+        # CONTRÔLE PROPORTIONNEL AMÉLIORÉ - Évite les mouvements extrêmes
+        if distance > 60:
+            return True, "long", 90   # Très très loin : monter vite mais contrôlé (90% au lieu de 100%)
+        elif distance > 35:
+            return True, "fast", 70   # Loin : monter activement (70% au lieu de 80%)
+        elif distance > 15:
+            return True, "hover", 45  # Moyennement loin : hover mode contrôlé
+        elif distance > -15:
+            return True, "stable", 25 # ZONE STABLE ÉLARGIE : -15 à +15 px (zone morte)
+        elif distance > -35:
+            return False, None, 0     # Légèrement bas : laisser descendre naturellement
         else:
-            return False, None, 0     # Descendre (relâché)
+            return False, None, 0     # Trop bas : descendre
     
-    def run(self, debug=True):
+    
+    def run(self, debug=False):
         self.sct = mss.mss()
         
         print("\n" + "="*50)
-        print("STARTING BOT V12 - HYBRID PROPORTIONAL CONTROL")
+        print("STARTING BOT V14 - OPTIMIZED CONTROL")
         print("="*50)
         
         if not self.calibrated:
             print("❌ Not calibrated! Use calibration button first.")
             return
         
-        print("\n🚁 Algorithm: V4 Proportional Control + V11 Prediction")
-        print("   - Gray zone maintained 20px ABOVE white marker")
-        print("   - Adaptive duty cycle based on distance:")
-        print("     • 100% = Rise fast (hold click)")
-        print("     • 80%  = Rise actively")
-        print("     • 50%  = HOVER (maintain position)")
-        print("     • 30%  = Stabilize")
-        print("     • 0%   = Descend")
-        print("\nPress 'Q' in debug window to stop")
+        print("\n🚁 Algorithm: V14 Optimized Control (No Prediction)")
+        print("   - Gray zone maintained 40px ABOVE white marker")
+        print("   - Adaptive duty cycle with enhanced stability:")
+        print("     • 90%  = Rise fast (very far)")
+        print("     • 70%  = Rise actively (far)")
+        print("     • 45%  = HOVER (medium distance)")
+        print("     • 25%  = STABLE (±15px zone)")
+        print("     • 0%   = Descend naturally")
+        print("\nPress F6 to stop")
         print("Starting in 3 seconds...\n")
         time.sleep(3)
         
         self.running = True
         fps_counter = 0
         fps_start = time.time()
-        
-        if debug:
-            cv2.namedWindow("Bot Debug V12", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Bot Debug V12", 800, 500)
-            cv2.setWindowProperty("Bot Debug V12", cv2.WND_PROP_TOPMOST, 1)
-            time.sleep(0.3)
         
         try:
             while self.running:
@@ -366,10 +366,11 @@ class GPOFishingBot:
                     # Wait 1 second before clicking to cast rod
                     elapsed = current_time - self.bar_lost_time
                     if not self.click_sent_for_restart and elapsed >= 1.0:
-                        # Incrémenter le compteur SEULEMENT si ce n'est pas le premier lancer
+                        # Incrémenter le compteur si ce n'est pas le premier lancer
                         if not self.first_cast:
                             self.fish_count += 1
                             print(f"\n🎣 FISH CAUGHT! Total: {self.fish_count} 🎣")
+                            self.save_fish_count()  # Sauvegarde
                         else:
                             self.first_cast = False
                             print("\n🎣 First cast - starting fishing...")
@@ -427,52 +428,7 @@ class GPOFishingBot:
                         self.is_clicking = False
                         self.last_action_time = current_time
                 
-                if debug:
-                    debug_view = np.zeros((500, 800, 3), dtype=np.uint8)
-                    blue_scaled = cv2.resize(blue_frame, (200, 400))
-                    debug_view[50:450, 50:250] = blue_scaled
-                    green_scaled = cv2.resize(green_frame, (100, 400))
-                    debug_view[50:450, 300:400] = green_scaled
-                    
-                    if white_y is not None:
-                        white_y_scaled = int((white_y / self.blue_bar["height"]) * 400) + 50
-                        cv2.line(debug_view, (50, white_y_scaled), (250, white_y_scaled), (255, 255, 255), 3)
-                        cv2.putText(debug_view, "TARGET", (260, white_y_scaled), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                        
-                        # Ligne cible (20px au-dessus)
-                        target_y_scaled = int(((white_y - self.target_offset) / self.blue_bar["height"]) * 400) + 50
-                        for x in range(50, 250, 10):
-                            cv2.line(debug_view, (x, target_y_scaled), (min(x+5, 250), target_y_scaled), (0, 255, 0), 2)
-                        cv2.putText(debug_view, "IDEAL", (260, target_y_scaled), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    
-                    if gray_y is not None:
-                        gray_y_scaled = int((gray_y / self.blue_bar["height"]) * 400) + 50
-                        cv2.line(debug_view, (50, gray_y_scaled), (250, gray_y_scaled), (128, 128, 128), 3)
-                        cv2.putText(debug_view, "CONTROL", (260, gray_y_scaled), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
-                    
-                    info_y = 50
-                    cv2.putText(debug_view, f"Progress: {progress:.1f}%", (450, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    info_y += 40
-                    click_color = (0, 255, 0) if self.is_clicking else (0, 0, 255)
-                    cv2.putText(debug_view, f"Clicking: {self.is_clicking}", (450, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, click_color, 2)
-                    info_y += 40
-                    if white_y and gray_y:
-                        target_gray_y = white_y - self.target_offset
-                        distance = gray_y - target_gray_y
-                        dist_color = (0, 255, 0) if abs(distance) <= self.tolerance else (255, 255, 0) if abs(distance) < 20 else (0, 165, 255)
-                        cv2.putText(debug_view, f"Distance: {distance:+.0f}px", (450, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, dist_color, 2)
-                    info_y += 40
-                    if click_type:
-                        type_text = {"long": "LONG", "fast": "FAST", "hover": "HOVER", "stable": "STABLE"}.get(click_type, "NONE")
-                        type_color = {"long": (0, 165, 255), "fast": (255, 255, 0), "hover": (0, 255, 0), "stable": (128, 255, 128)}.get(click_type, (128, 128, 128))
-                        cv2.putText(debug_view, f"Mode: {type_text} ({duty_cycle}%)", (450, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, type_color, 2)
-                    info_y += 40
-                    cv2.putText(debug_view, f"Target: -{self.target_offset}px | Tol: ±{self.tolerance}px", (450, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
-                    info_y += 60
-                    cv2.putText(debug_view, "BLUE BAR", (100, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                    cv2.putText(debug_view, "GREEN BAR", (310, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                    cv2.imshow("Bot Debug V12", debug_view)
-                
+                # Affichage console simplifié (sans debug visuel)
                 fps_counter += 1
                 if time.time() - fps_start >= 1.0:
                     mode_str = f"{click_type}({duty_cycle}%)" if click_type else "NONE"
@@ -480,17 +436,12 @@ class GPOFishingBot:
                     print(f"FPS: {fps_counter:2d} | Progress: {progress:5.1f}% | Click: {'YES' if self.is_clicking else 'NO '} | Mode: {mode_str:>14} | Dist: {dist_str:>6}")
                     fps_counter = 0
                     fps_start = time.time()
-                
-                if debug and cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
         
         except KeyboardInterrupt:
             print("\n\n⚠️ Stop requested by user")
         finally:
             if self.is_clicking:
                 pyautogui.mouseUp()
-            if debug:
-                cv2.destroyAllWindows()
             print("\n✅ Bot stopped")
 
 class BotGUI:
@@ -500,7 +451,7 @@ class BotGUI:
         self.bot_thread = None
         
         self.root = tk.Tk()
-        self.root.title("GPO Fishing Bot V12")
+        self.root.title("GPO Fishing Bot V14")
         self.root.geometry("320x300")
         self.root.resizable(False, False)
         self.root.attributes('-topmost', True)
@@ -514,7 +465,7 @@ class BotGUI:
         title_label = ttk.Label(main_frame, text="GPO Auto Fishing Bot", font=('Arial', 16, 'bold'))
         title_label.pack(pady=5)
         
-        version_label = ttk.Label(main_frame, text="V12 - Proportional Control", font=('Arial', 9, 'italic'))
+        version_label = ttk.Label(main_frame, text="V14 - Optimized Control", font=('Arial', 9, 'italic'))
         version_label.pack(pady=2)
         
         self.status_label = ttk.Label(main_frame, text="Status: Stopped", font=('Arial', 10))
@@ -534,6 +485,10 @@ class BotGUI:
         
         if self.bot.load_calibration():
             self.status_label.config(text="Status: Calibrated")
+        
+        # Charger le compteur de poissons
+        self.bot.load_fish_count()
+        self.fish_label.config(text=f"Fish Caught: {self.bot.fish_count}")
         
         self.root.bind('q', lambda e: self.exit_app())
         self.root.bind('Q', lambda e: self.exit_app())
@@ -590,7 +545,7 @@ class BotGUI:
     
     def run_bot_thread(self):
         try:
-            self.bot.run(debug=True)
+            self.bot.run(debug=False)
         except Exception as e:
             print(f"❌ Error: {e}")
             if self.status_label.winfo_exists():
@@ -612,7 +567,6 @@ class BotGUI:
             keyboard.remove_hotkey('f7')
         except:
             pass
-        cv2.destroyAllWindows()
         self.root.quit()
         self.root.destroy()
     
@@ -621,13 +575,14 @@ class BotGUI:
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("GPO AUTO FISHING BOT V12 - HYBRID VERSION")
+    print("GPO AUTO FISHING BOT V14 - OPTIMIZED VERSION")
     print("="*50)
     print("\n🔥 Features:")
-    print("  • V4 Proportional Control (Duty Cycle)")
-    print("  • V11 Prediction System")
-    print("  • V11 GUI & Calibration")
-    print("  • Optimized Performance")
+    print("  • No Prediction (More Stable)")
+    print("  • Enhanced STABLE Mode (±15px)")
+    print("  • Fish Count Saving")
+    print("  • Reduced Duty Cycles (Better Control)")
+    print("  • No Debug Window (Lighter)")
     
     bot = GPOFishingBot()
     gui = BotGUI(bot)
