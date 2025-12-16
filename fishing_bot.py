@@ -27,13 +27,14 @@ class GPOFishingBotV4:
         
         # Paramètres de détection
         self.target_offset = 20  # 🎯 Zone grise doit être 20px AU-DESSUS du marqueur blanc
-        self.tolerance = 3       # Tolérance (reduit) en pixels (zone "OK")
+        self.tolerance = 3       # Tolérance en pixels (zone "OK")
         self.calibrated = False
         
-        # Système de clics avec contrôle proportionnel
-        self.last_click_time = 0
+        # Systeme de suivi precis avec prediction
         self.last_action_time = 0
-        self.click_interval = 0.1  # Intervalle entre les micro-clics (100ms = 10 CPS)
+        self.last_white_y = None
+        self.white_y_velocity = 0  # Vitesse de deplacement de la cible (px/frame)
+        self.prediction_frames = 3  # Predire 3 frames a l'avance
         
         # Variables pour gestion poisson attrape
         self.bar_lost_time = None
@@ -56,7 +57,7 @@ class GPOFishingBotV4:
         cv2.moveWindow("Calibration", 50, 50)
         
         attempts = 0
-        max_attempts = 200  # 200 frames max pour détecter
+        max_attempts = 200  # 100 frames max pour détecter
         
         while attempts < max_attempts:
             attempts += 1
@@ -241,50 +242,80 @@ class GPOFishingBotV4:
     
     def should_click(self, gray_y, white_y):
         """
-        🎯 CONTRÔLE PROPORTIONNEL - Comme un hélicoptère !
+        Systeme de tracking precis avec prediction de mouvement
         
-        Objectif : Maintenir la zone grise à 20px AU-DESSUS du marqueur blanc
+        Calcule la duree optimale du clic selon:
+        1. Distance actuelle
+        2. Vitesse de deplacement de la cible
+        3. Prediction du prochain mouvement
         
-        Stratégie :
-        - Distance GRANDE (>50px) : Clic MAINTENU (monter vite)
-        - Distance MOYENNE (20-50px) : Clics RAPIDES 80% du temps (monter doucement)
-        - Distance PETITE (5-20px) : Clics à 50% du temps (MAINTENIR/HOVER)
-        - Distance PARFAITE (<5px) : Clics à 30% du temps (stabiliser)
-        - Trop HAUT (<-5px) : Relâcher complètement (descendre)
-        
-        Le "duty cycle" (% de temps où on clique) détermine si on monte, descend, ou maintient
+        Retourne (should_click, click_duration_ms)
         """
         if gray_y is None or white_y is None:
-            return False, None, 0
+            self.last_white_y = None
+            self.white_y_velocity = 0
+            return False, 0
         
-        # Position cible : 20px au-dessus du marqueur blanc
+        # Calculer la vitesse de la cible (prediction)
+        if self.last_white_y is not None:
+            self.white_y_velocity = white_y - self.last_white_y
+        self.last_white_y = white_y
+        
+        # Position cible: 20px au-dessus du marqueur blanc
         target_gray_y = white_y - self.target_offset
         
-        # Distance = combien on est loin de la position idéale
-        distance = gray_y - target_gray_y
+        # Predire la prochaine position de la cible
+        predicted_white_y = white_y + (self.white_y_velocity * self.prediction_frames)
+        predicted_target_y = predicted_white_y - self.target_offset
         
-        # CONTRÔLE PROPORTIONNEL basé sur la distance
+        # Distance actuelle + prediction
+        current_distance = gray_y - target_gray_y
+        predicted_distance = gray_y - predicted_target_y
+        
+        # Utiliser la moyenne pour lisser
+        distance = (current_distance + predicted_distance) / 2.0
+        
+        # CALCUL DE LA DUREE DU CLIC selon la distance
+        # Plus on est loin, plus le clic est long
+        
         if distance > 50:
-            # TRÈS LOIN : Monter vite (clic maintenu)
-            return True, "long", 100  # 100% duty cycle
-        
-        elif distance > 20:
-            # LOIN : Monter activement (clics rapides à 80%)
-            return True, "fast", 80  # 80% duty cycle
-        
+            # Tres loin: clic long (300ms)
+            self.last_click_duration = 300
+            return True, 300
+        elif distance > 30:
+            # Loin: clic moyen-long (200ms)
+            self.last_click_duration = 200
+            return True, 200
+        elif distance > 15:
+            # Moyennement loin: clic moyen (120ms)
+            self.last_click_duration = 120
+            return True, 120
+        elif distance > 8:
+            # Proche: clic court (80ms)
+            self.last_click_duration = 80
+            return True, 80
         elif distance > 3:
-            # PROCHE : MAINTENIR la position (clics à 50% = hover mode)
-            return True, "hover", 50  # 50% duty cycle = ne bouge pas
-        
+            # Tres proche: micro-clic (50ms)
+            self.last_click_duration = 50
+            return True, 50
         elif distance > -3:
-            # ZONE PARFAITE : Micro-ajustements pour stabiliser (30%)
-            return True, "stable", 30  # 30% duty cycle = descend très légèrement
-        
+            # Zone parfaite: micro-clic ultra-court (30ms)
+            self.last_click_duration = 30
+            return True, 30
+        elif distance > -8:
+            # Legerement haut: pause courte (pas de clic)
+            self.last_click_duration = 0
+            return False, 0
+        elif distance > -15:
+            # Moyennement haut: pause moyenne
+            self.last_click_duration = 0
+            return False, 0
         else:
-            # TROP HAUT : Relâcher complètement (descendre)
-            return False, None, 0  # 0% duty cycle
+            # Tres haut: pause longue (chute libre)
+            self.last_click_duration = 0
+            return False, 0
     
-    
+
     def check_and_recalibrate(self):
         """Cherche la barre bleue et met a jour si trouvee"""
         monitor = self.sct.monitors[1]
@@ -421,52 +452,34 @@ class GPOFishingBotV4:
                             continue
                 
                 # Décision avec contrôle proportionnel (duty cycle)
-                should_hold, click_type, duty_cycle = self.should_click(gray_y, white_y)
+                should_click, click_duration_ms = self.should_click(gray_y, white_y)
                 current_time = time.time()
                 
-                # SYSTÈME DE DUTY CYCLE (contrôle proportionnel)
-                # Le duty cycle détermine le % de temps où on clique
-                # 100% = clic maintenu (monter vite)
-                # 50% = clic/relâche alterné (maintenir position)
-                # 0% = relâché (descendre)
+                # SYSTEME DE CLICS ADAPTATIFS
+                # Clic de duree variable selon la distance
                 
-                if should_hold:
-                    if click_type == "long":
-                        # 100% duty cycle : clic maintenu
-                        if not self.is_clicking:
-                            pyautogui.mouseDown()
-                            self.is_clicking = True
-                            self.last_click_time = current_time
+                if should_click:
+                    time_since_last = current_time - self.last_action_time
+                    click_duration_s = click_duration_ms / 1000.0
                     
-                    else:
-                        # Clics proportionnels basés sur le duty cycle
-                        # Intervalle = 0.1s (10 CPS max)
-                        # Durée du clic = duty_cycle% de l'intervalle
-                        click_duration = self.click_interval * (duty_cycle / 100.0)
-                        release_duration = self.click_interval - click_duration
-                        
-                        time_since_action = current_time - self.last_action_time
-                        
-                        if not self.is_clicking:
-                            # On est relâché, temps de cliquer ?
-                            if time_since_action >= release_duration:
-                                pyautogui.mouseDown()
-                                self.is_clicking = True
-                                self.last_action_time = current_time
-                        else:
-                            # On est en train de cliquer, temps de relâcher ?
-                            if time_since_action >= click_duration:
-                                pyautogui.mouseUp()
-                                self.is_clicking = False
-                                self.last_action_time = current_time
-                else:
-                    # Relâcher complètement (trop haut)
-                    if self.is_clicking:
+                    if not self.is_clicking:
+                        # Commencer un nouveau clic
+                        pyautogui.mouseDown()
+                        self.is_clicking = True
+                        self.last_action_time = current_time
+                    elif time_since_last >= click_duration_s:
+                        # Terminer le clic et attendre un peu avant le prochain
                         pyautogui.mouseUp()
                         self.is_clicking = False
                         self.last_action_time = current_time
+                        time.sleep(0.03)  # Petite pause entre les clics
+                else:
+                    # Pas de clic necessaire (descendre)
+                    if self.is_clicking:
+                        pyautogui.mouseUp()
+                        self.is_clicking = False
                 
-                # Debug visuel
+                # Debug visuel Debug visuel
                 if debug:
                     debug_view = np.zeros((500, 800, 3), dtype=np.uint8)
                     
@@ -519,11 +532,11 @@ class GPOFishingBotV4:
                     
                     info_y += 40
                     # Afficher le type de clic et duty cycle
-                    if click_type:
-                        type_text = {"long": "LONG", "fast": "FAST", "hover": "HOVER", "stable": "STABLE"}.get(click_type, "NONE")
-                        type_color = {"long": (0, 165, 255), "fast": (255, 255, 0), "hover": (0, 255, 0), "stable": (128, 255, 128)}.get(click_type, (128, 128, 128))
-                        cv2.putText(debug_view, f"Mode: {type_text} ({duty_cycle}%)", (450, info_y),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, type_color, 2)
+                    # Afficher la duree du dernier clic
+                    if hasattr(self, 'last_click_duration'):
+                        color = (0, 255, 0) if self.last_click_duration < 100 else (255, 255, 0) if self.last_click_duration < 200 else (0, 165, 255)
+                        cv2.putText(debug_view, f"Click: {self.last_click_duration}ms", (450, info_y),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                     
                     info_y += 40
                     # Afficher la configuration
@@ -541,7 +554,7 @@ class GPOFishingBotV4:
                 # FPS Counter
                 fps_counter += 1
                 if time.time() - fps_start >= 1.0:
-                    mode_str = f"{click_type}({duty_cycle}%)" if click_type else "NONE"
+                    mode_str = f"Click:{getattr(self, 'last_click_duration', 0)}ms"
                     dist_str = f"{gray_y - (white_y - self.target_offset):+.0f}px" if (white_y and gray_y) else "N/A"
                     print(f"FPS: {fps_counter:2d} | Progress: {progress:5.1f}% | " +
                           f"Click: {'YES' if self.is_clicking else 'NO '} | Mode: {mode_str:>14} | " +
@@ -555,6 +568,7 @@ class GPOFishingBotV4:
                     print("Attente que la barre disparaisse...\n")
                     if self.is_clicking:
                         pyautogui.mouseUp()
+                        self.is_clicking = False
                     self.just_caught_fish = True
                     self.fish_caught_time = time.time()
                     time.sleep(2)
