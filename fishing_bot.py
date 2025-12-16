@@ -99,7 +99,7 @@ class GPOFishingBot:
         self.calibrated = False
         
         # === PARAMÈTRES V4 - CONTRÔLE PROPORTIONNEL ===
-        self.target_offset = 20  # Zone grise doit être 20px AU-DESSUS du marqueur blanc
+        self.target_offset = 40  # Zone grise doit être 20px AU-DESSUS du marqueur blanc
         self.tolerance = 5       # Tolérance en pixels
         self.click_interval = 0.1  # Intervalle entre micro-clics (10 CPS max)
         
