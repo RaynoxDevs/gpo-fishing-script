@@ -3,10 +3,14 @@ import numpy as np
 import mss
 import pyautogui
 import time
+import tkinter as tk
+from tkinter import ttk
+import threading
+import keyboard  # Pour hotkeys globaux
 
 class GPOFishingBotV4:
     def __init__(self):
-        self.sct = mss.mss()
+        self.sct = None  # Sera cree dans get_sct()
         self.running = False
         self.is_clicking = False
         
@@ -41,7 +45,13 @@ class GPOFishingBotV4:
         self.click_sent_for_restart = False
         self.just_caught_fish = False
         self.fish_caught_time = None
-        
+    
+    def get_sct(self):
+        """Cree l'objet mss dans le thread actuel si pas deja fait"""
+        if self.sct is None:
+            self.sct = mss.mss()
+        return self.sct
+    
     def auto_calibrate(self):
         """
         Détecte automatiquement la position de la barre bleue,
@@ -52,9 +62,7 @@ class GPOFishingBotV4:
         print("Recherche de la barre bleue...\n")
         
         # Créer une fenêtre de preview
-        cv2.namedWindow("Calibration", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Calibration", 800, 600)
-        cv2.moveWindow("Calibration", 50, 50)
+        # Pas de fenetre preview
         
         attempts = 0
         max_attempts = 200  # 100 frames max pour détecter
@@ -63,8 +71,9 @@ class GPOFishingBotV4:
             attempts += 1
             
             # Capturer l'écran complet
-            monitor = self.sct.monitors[1]
-            screenshot = self.sct.grab(monitor)
+            sct = self.get_sct()
+            monitor = sct.monitors[1]
+            screenshot = sct.grab(monitor)
             frame = np.array(screenshot)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
             
@@ -112,8 +121,7 @@ class GPOFishingBotV4:
                 cv2.putText(debug_frame, "CALIBRATION OK!", (20, 40),
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 
-                cv2.imshow("Calibration", debug_frame)
-                cv2.waitKey(2000)  # Afficher 2 secondes
+                # Debug removed  # Afficher 2 secondes
                 cv2.destroyAllWindows()
                 
                 print("✅ CALIBRATION RÉUSSIE !")
@@ -130,13 +138,11 @@ class GPOFishingBotV4:
                 debug_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
                 cv2.putText(debug_frame, f"Recherche... ({attempts}/{max_attempts})", (20, 40),
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
-                cv2.imshow("Calibration", debug_frame)
-                cv2.waitKey(1)
+                # Debug removed
             
             time.sleep(0.1)
         
         # ❌ Échec
-        cv2.destroyAllWindows()
         print("\n❌ CALIBRATION ÉCHOUÉE")
         print("Assure-toi d'être devant le mini-jeu de pêche avec la barre bleue visible !")
         return False
@@ -173,13 +179,13 @@ class GPOFishingBotV4:
     
     def capture_blue_bar(self):
         """Capture uniquement la barre bleue"""
-        screenshot = self.sct.grab(self.blue_bar)
+        screenshot = self.get_sct().grab(self.blue_bar)
         frame = np.array(screenshot)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     
     def capture_green_bar(self):
         """Capture uniquement la barre verte"""
-        screenshot = self.sct.grab(self.green_bar)
+        screenshot = self.get_sct().grab(self.green_bar)
         frame = np.array(screenshot)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     
@@ -225,17 +231,22 @@ class GPOFishingBotV4:
     
     def get_green_bar_progress(self, green_frame):
         """Calcule le pourcentage de remplissage de la barre verte"""
+        # Convertir en HSV
         hsv = cv2.cvtColor(green_frame, cv2.COLOR_BGR2HSV)
         
-        lower_green = np.array([35, 50, 50])
-        upper_green = np.array([85, 255, 255])
+        # Seuils tres permissifs pour capturer TOUT le vert (meme les teintes foncees)
+        lower_green = np.array([25, 20, 20])
+        upper_green = np.array([95, 255, 255])
         mask = cv2.inRange(hsv, lower_green, upper_green)
         
+        # Compter les pixels verts
         green_pixels = np.sum(mask > 0)
         total_pixels = mask.shape[0] * mask.shape[1]
         
         if total_pixels > 0:
             percentage = (green_pixels / total_pixels) * 100
+            # Debug: afficher les valeurs brutes
+            # print(f"Debug: {green_pixels}/{total_pixels} = {percentage:.1f}%")
             return percentage
         
         return 0.0
@@ -318,8 +329,9 @@ class GPOFishingBotV4:
 
     def check_and_recalibrate(self):
         """Cherche la barre bleue et met a jour si trouvee"""
-        monitor = self.sct.monitors[1]
-        screenshot = self.sct.grab(monitor)
+        sct = self.get_sct()
+        monitor = sct.monitors[1]
+        screenshot = sct.grab(monitor)
         frame = np.array(screenshot)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
         
@@ -393,6 +405,7 @@ class GPOFishingBotV4:
         if debug:
             cv2.namedWindow("Bot Debug", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Bot Debug", 800, 500)
+            cv2.setWindowProperty("Bot Debug", cv2.WND_PROP_TOPMOST, 1)  # Always on top
             time.sleep(0.3)
         
         try:
@@ -587,12 +600,103 @@ class GPOFishingBotV4:
                 cv2.destroyAllWindows()
             print("\n✅ Bot arrêté proprement")
 
-# === POINT D'ENTRÉE ===
-if __name__ == "__main__":
-    bot = GPOFishingBotV4()
+
+
+class FishingBotGUI:
+    def __init__(self, bot):
+        self.bot = bot
+        self.running = False
+        self.bot_thread = None
+        
+        self.root = tk.Tk()
+        self.root.title("Fishing Script GPO")
+        self.root.geometry("300x200")
+        self.root.resizable(False, False)
+        self.root.attributes('-topmost', True)  # Always on top
+        
+        style = ttk.Style()
+        style.configure('Big.TButton', font=('Arial', 14, 'bold'))
+        
+        main_frame = ttk.Frame(self.root, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        title_label = ttk.Label(main_frame, text="GPO Auto Fishing Bot", font=('Arial', 16, 'bold'))
+        title_label.pack(pady=10)
+        
+        self.status_label = ttk.Label(main_frame, text="Status: Arrete", font=('Arial', 10))
+        self.status_label.pack(pady=10)
+        
+        self.start_button = ttk.Button(main_frame, text="START (F6)", command=self.start_bot, style='Big.TButton')
+        self.start_button.pack(pady=10, fill=tk.X)
+        
+        self.exit_button = ttk.Button(main_frame, text="EXIT (Q)", command=self.exit_app, style='Big.TButton')
+        self.exit_button.pack(pady=10, fill=tk.X)
+        
+        # Hotkeys locaux (quand fenetre focus)
+        self.root.bind('<F6>', lambda e: self.start_bot())
+        self.root.bind('q', lambda e: self.exit_app())
+        self.root.bind('Q', lambda e: self.exit_app())
+        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
+        
+        # Hotkey GLOBAL F6 (marche meme si jeu au premier plan)
+        try:
+            keyboard.add_hotkey('f6', self.start_bot, suppress=False)
+            print("✅ Hotkey global F6 active (marche dans le jeu)")
+        except:
+            print("⚠️  Hotkey global F6 non disponible (lance en admin si besoin)")
     
+    def start_bot(self):
+        if not self.running:
+            print("\n▶️  Demarrage du bot...")
+            self.running = True
+            self.status_label.config(text="Status: Calibration...")
+            self.start_button.config(state='disabled', text="EN COURS...")
+            self.bot_thread = threading.Thread(target=self.run_bot_thread, daemon=True)
+            self.bot_thread.start()
+    
+    def run_bot_thread(self):
+        try:
+            print("\n🔍 === DEBUT CALIBRATION ===")
+            if self.bot.auto_calibrate():
+                self.status_label.config(text="Status: Peche en cours...")
+                print("✅ Calibration OK! Demarrage...")
+                self.bot.run(debug=True)
+            else:
+                self.status_label.config(text="Status: Echec")
+                print("❌ Echec calibration")
+                self.running = False
+                self.start_button.config(state='normal')
+        except Exception as e:
+            print(f"❌ Erreur: {e}")
+            self.status_label.config(text="Status: Erreur")
+            self.running = False
+            self.start_button.config(state='normal')
+    
+    def exit_app(self):
+        print("\n👋 Fermeture...")
+        self.bot.running = False
+        if self.bot.is_clicking:
+            pyautogui.mouseUp()
+        
+        # Nettoyer le hotkey global
+        try:
+            keyboard.remove_hotkey('f6')
+        except:
+            pass
+        
+        cv2.destroyAllWindows()
+        self.root.quit()
+        self.root.destroy()
+    
+    def run(self):
+        self.root.mainloop()
+
+# === POINT D'ENTREE ===
+if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚁 LANCEMENT DU BOT V4 - CONTRÔLE PROPORTIONNEL")
+    print("GPO AUTO FISHING BOT - INTERFACE GUI")
     print("="*50)
     
-    bot.run(debug=True)
+    bot = GPOFishingBotV4()
+    gui = FishingBotGUI(bot)
+    gui.run()
