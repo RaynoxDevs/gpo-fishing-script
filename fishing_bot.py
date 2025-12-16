@@ -9,6 +9,7 @@ import threading
 import keyboard
 import json
 import os
+import ctypes
 
 class ManualCalibrationWindow:
     def __init__(self, on_complete_callback, last_x=None, last_y=None):
@@ -139,26 +140,26 @@ class GPOFishingBot:
     
     def manual_calibrate(self):
         print("\n🎯 Manual Calibration Mode")
-        print("🔍 Applying zoom preset first...")
-        print("Please click on the game window now...")
+        print("🔍 Applying zoom preset...")
+        print("Please focus on game window (2 seconds)...")
         time.sleep(2)
         
-        print("1. Zooming in fully (20 scrolls)...")
+        MOUSEEVENTF_WHEEL = 0x0800
+        
+        print("1. Zooming in (20x)...")
         for i in range(20):
-            pyautogui.scroll(100)
-            if i % 5 == 0:
-                print(f"   Scroll {i+1}/20...")
-            time.sleep(0.15)
+            ctypes.windll.user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, 120, 0)
+            time.sleep(0.02)
         
-        time.sleep(1)
-        print("2. Zooming out (9 scrolls)...")
+        time.sleep(0.3)
+        
+        print("2. Zooming out (9x)...")
         for i in range(9):
-            pyautogui.scroll(-100)
-            print(f"   Scroll {i+1}/9...")
-            time.sleep(0.2)
+            ctypes.windll.user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, -120, 0)
+            time.sleep(0.03)
         
-        time.sleep(0.5)
-        print("✅ Zoom complete!")
+        time.sleep(0.3)
+        print("✅ Zoom applied!")
         time.sleep(0.5)
         print("✅ Zoom preset applied!")
         print("\nMove the blue rectangle over the blue bar")
