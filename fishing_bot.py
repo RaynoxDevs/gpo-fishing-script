@@ -338,20 +338,50 @@ class GPOFishingBot:
                 
                 white_y = self.find_white_marker_y(blue_frame)
                 gray_y = self.find_gray_zone_y(blue_frame)
+                
+                # Reset restart variables when detection works
+                if white_y is not None and gray_y is not None:
+                    self.bar_lost_time = None
+                    self.click_sent_for_restart = False
                 progress = self.get_green_bar_progress(green_frame)
                 
                 if white_y is None or gray_y is None:
                     current_time = time.time()
                     
+                    # After catching fish, wait a bit
                     if self.just_caught_fish:
-                        if self.fish_caught_time and (current_time - self.fish_caught_time) < 5:
+                        if self.fish_caught_time and (current_time - self.fish_caught_time) < 3:
                             time.sleep(0.5)
                             continue
                         else:
                             self.just_caught_fish = False
                     
-                    time.sleep(0.1)
-                    continue
+                    # Detection failed - rod not cast, restart fishing
+                    if self.bar_lost_time is None:
+                        self.bar_lost_time = current_time
+                        print("\n⚠️  No detection - Restarting fishing...")
+                    
+                    # Click to cast rod
+                    if not self.click_sent_for_restart:
+                        pyautogui.click()
+                        print("🖱️  Click sent to cast rod")
+                        self.click_sent_for_restart = True
+                        time.sleep(0.5)
+                    
+                    # Wait for bar to appear (max 15s)
+                    elapsed = current_time - self.bar_lost_time
+                    if elapsed < 15:
+                        if elapsed % 3 < 0.5:  # Print every 3 seconds
+                            print(f"⏳ Waiting for bar... ({elapsed:.1f}s/15s)")
+                        time.sleep(0.5)
+                        continue
+                    else:
+                        # Reset after 15s timeout
+                        print("⚠️  15s timeout - Resetting...")
+                        self.bar_lost_time = None
+                        self.click_sent_for_restart = False
+                        time.sleep(1)
+                        continue
                 
                 # === DÉCISION V4 AVEC DUTY CYCLE ===
                 should_click, click_type, duty_cycle = self.should_click_v4(gray_y, white_y)
