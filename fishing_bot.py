@@ -361,15 +361,15 @@ class GPOFishingBot:
                         self.bar_lost_time = current_time
                         print("\n⚠️  No detection - Restarting fishing...")
                     
-                    # Click to cast rod
-                    if not self.click_sent_for_restart:
+                    # Wait 1 second before clicking to cast rod
+                    elapsed = current_time - self.bar_lost_time
+                    if not self.click_sent_for_restart and elapsed >= 1.0:
                         pyautogui.click()
                         print("🖱️  Click sent to cast rod")
                         self.click_sent_for_restart = True
                         time.sleep(0.5)
                     
-                    # Wait for bar to appear (max 15s)
-                    elapsed = current_time - self.bar_lost_time
+                    # Wait for bar to appear (max 15s after click)
                     if elapsed < 15:
                         if elapsed % 3 < 0.5:  # Print every 3 seconds
                             print(f"⏳ Waiting for bar... ({elapsed:.1f}s/15s)")
@@ -472,7 +472,8 @@ class GPOFishingBot:
                     fps_start = time.time()
                 
                 if progress >= 95.0:
-                    print("\n🎣 FISH CAUGHT! 🎣")
+                    self.fish_count += 1
+                    print(f"\n🎣 FISH CAUGHT! Total: {self.fish_count} 🎣")
                     print("Waiting for bar to disappear...\n")
                     if self.is_clicking:
                         pyautogui.mouseUp()
@@ -518,7 +519,10 @@ class BotGUI:
         version_label.pack(pady=2)
         
         self.status_label = ttk.Label(main_frame, text="Status: Stopped", font=('Arial', 10))
-        self.status_label.pack(pady=10)
+        self.status_label.pack(pady=5)
+        
+        self.fish_label = ttk.Label(main_frame, text="Fish Caught: 0", font=('Arial', 12, 'bold'), foreground='green')
+        self.fish_label.pack(pady=5)
         
         self.cal_button = ttk.Button(main_frame, text="CALIBRATION (F7)", style='Big.TButton', state='disabled')
         self.cal_button.pack(pady=5, fill=tk.X)
@@ -555,6 +559,12 @@ class BotGUI:
         
         threading.Thread(target=do_calibration, daemon=True).start()
     
+
+    def update_fish_count(self):
+        if self.fish_label.winfo_exists():
+            self.fish_label.config(text=f"Fish Caught: {self.bot.fish_count}")
+        self.root.after(1000, self.update_fish_count)
+
     def start_bot(self):
         if not self.bot.calibrated:
             print("⚠️ Please calibrate first!")
